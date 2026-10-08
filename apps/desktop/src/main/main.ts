@@ -869,10 +869,8 @@ async function writeManagedModelCatalog(
     existingCatalog,
     availableModes,
     await configuredContextProfile(availableModes),
-    (await loadSettings()).webToolMode === "full"
-      ? await probeNativeModelFamilies()
-      : [],
-    (await loadSettings()).webToolMode === "full",
+    await probeNativeModelFamilies(),
+    (await loadSettings()).webToolMode === "full" ? true : "simple",
   );
   const text = `${JSON.stringify(catalog, null, 2)}\n`;
   const path = codexManagedModelCatalogPath();
@@ -1121,7 +1119,7 @@ async function refreshOwnedCodexModelCatalog(
       modes ?? bridgeWebModesInCatalog(currentPayload),
     ),
     nativeFamilies,
-    (await loadSettings()).webToolMode === "full",
+    (await loadSettings()).webToolMode === "full" ? true : "simple",
   );
   const text = `${JSON.stringify(catalog, null, 2)}\n`;
   if (text === current.text) return;
@@ -1144,7 +1142,7 @@ async function refreshOwnedWebOnlyModelCatalog(
       modes,
       await configuredContextProfile(modes),
       nativeFamilies,
-      (await loadSettings()).webToolMode === "full",
+      (await loadSettings()).webToolMode === "full" ? true : "simple",
     );
   });
   if (changed) await invalidateCodexModelCache();

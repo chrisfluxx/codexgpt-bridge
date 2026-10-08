@@ -54,7 +54,7 @@ export function modelSelectionLabelMatches(
   if (requested === "bridge-native:6.1")
     return /^GPT[-\s]?6\.1\s+Sol$/i.test(label);
   if (requested === "bridge-native:6")
-    return /^(?:Latest|最新(?:的模型|模型|的)?|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i.test(
+    return /^(?:Latest|最新(?:的模型|模型|的)?|최신|(?:GPT[-\s]?)?6(?:\s+(?:Sol|Astra))?(?:\s+Pro)?)$/i.test(
       label,
     );
   const normalize = (value: string): string =>
@@ -78,8 +78,6 @@ export function nativeModelDescriptionsMatch(
   const family = requested.slice("bridge-native:".length);
   if (family !== "5.6" && family !== "6" && family !== "6.1") return false;
   if (family === "6.1" && mode === "pro") return false;
-  // The legacy GPT-6 Pro route uses Latest; lower efforts still require 5.6.
-  const expected = family === "6" && mode !== "pro" ? "5.6" : family;
   const states = descriptions.flatMap((text) => {
     const match =
       /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+([^,，]+)(?:[,，]|$)/i.exec(
@@ -99,8 +97,10 @@ export function nativeModelDescriptionsMatch(
     states.length > 0 &&
     states.every(
       (state) =>
-        state.version === expected &&
-        (!state.name || state.name === (expected === "6" ? "astra" : "sol")) &&
+        state.version === family &&
+        (!state.name ||
+          state.name ===
+            (family === "6" && mode === "pro" ? "astra" : "sol")) &&
         (mode === "pro"
           ? /^Pro$/i.test(state.mode)
           : !/^Pro$/i.test(state.mode)),
@@ -294,13 +294,25 @@ export function observeModelSelection(
         .split(/\s+/)
         .filter(Boolean)) {
         const text = document.getElementById(id)?.textContent?.trim();
-        if (text) modelDescriptions.add(text.slice(0, 512));
+        if (text) {
+          modelDescriptions.add(text.slice(0, 512));
+          // The current picker hides its numeric thumb. Its owned keyboard row
+          // describes the selected version and effort in a live announcement.
+          const activeEffort =
+            /^(?:GPT[-\s]?)?\d+(?:\.\d+)?(?:\s+(?:Sol|Astra))?\s+(Instant|Light|Low|Medium|High|Extra[- ]High|XHigh|Pro|即時|即时|低|中等|中|高|極高|极高)\s*[,，]/i.exec(
+              text,
+            )?.[1];
+          if (activeEffort) noteMode(el, activeEffort);
+        }
       }
     }
   }
   const direct = resolveRoots
-    ? menuRoots.filter((root) =>
-        root.matches('[data-testid="composer-intelligence-picker-content"]'),
+    ? menuRoots.filter(
+        (root) =>
+          root.matches(
+            '[data-testid="composer-intelligence-picker-content"]',
+          ) || root.querySelector("[data-model-picker-view]") !== null,
       )
     : all('[data-testid="composer-intelligence-picker-content"]');
   const disabledControl = (el: Element): boolean =>
@@ -335,6 +347,14 @@ export function observeModelSelection(
     else if (/^thinking\b/.test(selectedMode) && effort)
       noteMode(checked[0]!, `Thinking ${effort}`);
   } else {
+    // Current composer menus may omit the older content test id. Availability
+    // still comes from visible, enabled model radios inside the owned menu.
+    for (const root of menuRoots) {
+      for (const el of all('[role="menuitemradio"], [role="option"]', root)) {
+        const text = label(el).split(/\r?\n/)[0]!.trim();
+        if (modelLike(text) && !disabledControl(el)) availableModels.push(text);
+      }
+    }
     for (const root of direct) {
       // A mounted advanced panel can be inert. Only its checked model is state evidence;
       // unselected hidden options never establish availability or entitlement.
@@ -479,7 +499,13 @@ export function observeModelSelection(
     // higher-effort Luna route. Assistant prose and navigation are excluded by
     // visible(), and geometry/form checks keep an unrelated button from becoming
     // execution evidence.
-    if (composer && controls.size === 0 && !modes.length && !models.length) {
+    if (
+      composer &&
+      menuRoots.length === 0 &&
+      controls.size === 0 &&
+      !modes.length &&
+      !models.length
+    ) {
       const composerRect = composer.getBoundingClientRect();
       const form = composer.closest("form");
       const thinkControls = all('button, [role="button"]').filter((el) => {

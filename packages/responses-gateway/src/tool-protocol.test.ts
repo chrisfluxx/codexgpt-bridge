@@ -130,6 +130,35 @@ describe("Codex browser tool protocol", () => {
     assert.equal(parseBridgeGeneratedImagesEnvelope(markdown), undefined);
   });
 
+  it("does not require tools when the current instruction forbids them", () => {
+    for (const prompt of [
+      "Repeat the earlier token. Do not call any tools.",
+      "Repeat the earlier token. Don't use tools.",
+      "Never invoke tools. Answer from the previous result.",
+      "Avoid calling tools. Answer from history.",
+      "回覆先前的結果，不要呼叫任何工具。",
+      "不要使用工具，直接回答。",
+    ]) {
+      assert.equal(
+        prepareBridgeWebTurn(compiled(prompt)).expectsToolCall,
+        false,
+        prompt,
+      );
+    }
+    assert.equal(
+      prepareBridgeWebTurn(
+        compiled("Do not use web tools. Use Codex tools to read the file."),
+      ).expectsToolCall,
+      true,
+    );
+    assert.equal(
+      prepareBridgeWebTurn(
+        compiled("Do not call tools.", { toolChoiceRequired: true }),
+      ).expectsToolCall,
+      true,
+    );
+  });
+
   it("keeps simple questions verbatim", () => {
     const prepared = prepareBridgeWebTurn(compiled("test"));
     assert.equal(prepared.protocolActive, prepared.tools.length > 0);

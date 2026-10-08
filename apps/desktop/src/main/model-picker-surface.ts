@@ -75,6 +75,57 @@ export function modelPickerRoots(): Element[] {
   return [...roots];
 }
 
+/** Reveal the browser's model radios only within its single owned picker. */
+export function revealModelFamilyOptions(
+  resolveRoots: () => readonly Element[],
+): boolean {
+  const candidates = resolveRoots();
+  const roots = candidates.filter(
+    (root) =>
+      !candidates.some((other) => other !== root && root.contains(other)),
+  );
+  if (roots.length !== 1) return false;
+  const root = roots[0]!;
+  const visible = (element: Element): boolean => {
+    if (
+      !element.isConnected ||
+      element.closest('[inert], [aria-hidden="true"]')
+    )
+      return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    );
+  };
+  // Current GPT-6 menus may already expose GPT-6 and GPT-5.6 Sol. Do not
+  // toggle that panel closed when its options are already operable.
+  if (
+    [...root.querySelectorAll('[role="menuitemradio"], [role="option"]')].some(
+      (option) =>
+        visible(option) &&
+        /^(?:GPT[-\s]?\d|\d+(?:\.\d+)*|Latest|最新|최신)/i.test(
+          (option.textContent ?? "").trim(),
+        ),
+    )
+  )
+    return true;
+  const toggles = [
+    ...new Set(
+      root.querySelectorAll(
+        '[data-model-picker-view-toggle="true"], [role="menuitem"][aria-expanded="false"]',
+      ),
+    ),
+  ].filter(visible);
+  if (toggles.length !== 1 || !(toggles[0] instanceof HTMLElement))
+    return false;
+  toggles[0].click();
+  return true;
+}
+
 export interface ModelSliderState {
   min: number;
   max: number;

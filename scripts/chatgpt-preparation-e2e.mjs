@@ -88,7 +88,11 @@ function fixture({
     </script>`;
 }
 
-function connectorRetryFixture({ appMention = false, pro = false } = {}) {
+function connectorRetryFixture({
+  appMention = false,
+  pro = false,
+  blockedModelLoads = 0,
+} = {}) {
   return `<!doctype html><main>
     <form onsubmit="return false">
       <div ${appMention ? 'class="ProseMirror" data-composer-markdown' : 'id="prompt-textarea"'} contenteditable="true" style="width:500px;min-height:30px"></div>
@@ -124,6 +128,7 @@ function connectorRetryFixture({ appMention = false, pro = false } = {}) {
     modelPicker.onclick = () => {
       document.querySelector('[data-model-menu]')?.remove();
       if (!connectorSelected && state.sends === 0) { state.preConnectorModelClicks++; persist(); return; }
+      if (state.loads <= ${blockedModelLoads}) return;
       state.modelMenuOpens += 1;
       persist();
       const menu = document.createElement('div');
@@ -599,6 +604,76 @@ try {
   assert.doesNotMatch(
     JSON.stringify(connectorRetry.traces),
     /private-connector-input|<script|data:text/,
+  );
+
+  for (const blockedModelLoads of [1, 2]) {
+    const recoveredModelMenu = await app.evaluate(
+      async ({ BrowserWindow }, html) => {
+        const traces = [];
+        const controller = new globalThis.ChatGptBrowserController(
+          "data:text/html;charset=utf-8," + encodeURIComponent(html),
+          undefined,
+          undefined,
+          async (trace) => traces.push(trace),
+        );
+        let output, error, diagnosticCode;
+        try {
+          output = await controller.runTurn({
+            mode: "extra-high",
+            threadId: "blocked-model-control",
+            turnId: "blocked-model-turn",
+            prompt: "private-blocked-model-input",
+            images: [],
+            allowWebNativeTools: true,
+            connectorName: "CodexGPT Bridge",
+            signal: globalThis.AbortSignal.timeout(35_000),
+          });
+        } catch (caught) {
+          error = caught.message;
+          diagnosticCode = caught.diagnosticCode;
+        }
+        const window = BrowserWindow.getAllWindows().find((candidate) =>
+          candidate.webContents.getURL().startsWith("data:"),
+        );
+        const state = window
+          ? await window.webContents.executeJavaScript(
+              "JSON.parse(window.name || '{}')",
+            )
+          : {};
+        await controller.close();
+        return { output, error, diagnosticCode, state, traces };
+      },
+      connectorRetryFixture({ blockedModelLoads }),
+    );
+    assert.equal(
+      recoveredModelMenu.state.loads,
+      2,
+      JSON.stringify(recoveredModelMenu),
+    );
+    assert.ok(
+      recoveredModelMenu.traces[0].preparationSteps.some(
+        (step) => step.stage === "reload-stale-connector-picker",
+      ),
+    );
+    if (blockedModelLoads === 1) {
+      assert.equal(
+        recoveredModelMenu.error,
+        undefined,
+        JSON.stringify(recoveredModelMenu),
+      );
+      assert.equal(recoveredModelMenu.state.sends, 1);
+      assert.deepEqual(recoveredModelMenu.state.selectedAtSend, ["Extra High"]);
+    } else {
+      assert.equal(
+        recoveredModelMenu.diagnosticCode,
+        "model-menu-unavailable",
+        JSON.stringify(recoveredModelMenu),
+      );
+      assert.equal(recoveredModelMenu.state.sends, 0);
+    }
+  }
+  process.stdout.write(
+    "Preparation E2E: model menu after App attachment recovered before Send; persistent failure stopped after one reload with zero sends.\n",
   );
 
   const modernConnector = await app.evaluate(

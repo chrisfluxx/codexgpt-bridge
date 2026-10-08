@@ -111,8 +111,14 @@ function nativeVersionSliderFixture(
   override = null,
   hiddenThumb = false,
   sol61 = false,
+  currentPicker = false,
 ) {
-  const html = sliderFixture()
+  // Current ChatGPT picker exposes GPT-6 explicitly beside GPT-5.6 Sol.
+  const html = sliderFixture(false, "Pro", "GPT-6")
+    .replace(
+      '<button role="menuitemradio">最新的</button>',
+      '<button role="menuitemradio">GPT-6</button>',
+    )
     .replace(
       '<button role="menuitemradio">GPT-5.5</button>',
       sol61
@@ -124,9 +130,9 @@ function nativeVersionSliderFixture(
       `const description = document.createElement('span'); description.id = 'native-model-description';
       menu.append(description); menu.querySelector('#effort').setAttribute('aria-describedby', description.id);
       const update = () => {
-        description.textContent = ${JSON.stringify(override)} ?? ((modelName === 'GPT-6.1 Sol' ? modelName : modelName === '最新的' && selected === 'Pro' ? 'GPT-6 Astra' : 'GPT-5.6 Sol') + (selected === 'Pro' ? ' Pro, max' : ' Thinking, ' + selected));`,
+        description.textContent = ${JSON.stringify(override)} ?? (${currentPicker ? "(modelName === 'GPT-6' ? '6' : modelName) + ' ' + selected + '，第 ' + (['Instant', 'Medium', 'High', 'Extra High', 'Pro'].indexOf(selected) + 1) + ' 個，共 5 個。'" : "(modelName === 'GPT-6.1 Sol' ? modelName : modelName === 'GPT-6' ? selected === 'Pro' ? 'GPT-6 Astra' : 'GPT-6 Sol' : 'GPT-5.6 Sol') + (selected === 'Pro' ? ' Pro, max' : ' Thinking, ' + selected)"});`,
     );
-  return hiddenThumb
+  const result = hiddenThumb
     ? html
         .replace(
           'role="slider" aria-valuemin',
@@ -137,6 +143,33 @@ function nativeVersionSliderFixture(
           'id="effort" aria-keyshortcuts="ArrowLeft ArrowRight" tabindex="0"',
         )
     : html;
+  return currentPicker
+    ? result
+        .replace(
+          'data-testid="model-switcher-dropdown-button"',
+          'data-current-model-control="true"',
+        )
+        .replace(
+          'data-testid="composer-intelligence-picker-content"',
+          'data-model-picker-view="simple"',
+        )
+        .replace(
+          'id="toggle"',
+          'id="toggle" data-model-picker-view-toggle="true"',
+        )
+        .replace(
+          "window.menuOpens++;",
+          "window.menuOpens++; picker.setAttribute('aria-hidden', 'true');",
+        )
+        .replace(
+          "description.textContent =",
+          "picker.textContent = (modelName === 'GPT-6' ? '' : modelName + ' ') + selected; description.textContent =",
+        )
+        .replace(
+          "if (e.key === 'Escape') document.querySelector('[role=\"menu\"]')?.remove();",
+          "if (e.key === 'Escape') { document.querySelector('[role=\"menu\"]')?.remove(); picker.removeAttribute('aria-hidden'); }",
+        )
+    : result;
 }
 
 function offFormRoleControlSliderFixture() {
@@ -279,26 +312,34 @@ try {
     args: [fileURLToPath(new URL("./chatgpt-mode-host.mjs", import.meta.url))],
     env: { ...process.env, CODEXGPT_BRIDGE_DOM_TEST_PROFILE: directory },
   });
-  {
-    const proof = await app.evaluate(async ({ BrowserWindow }, html) => {
-      const controller = new globalThis.ChatGptBrowserController(
-        "data:text/html;charset=utf-8," + encodeURIComponent(html),
-      );
-      try {
-        const families = await controller.probeNativeModelFamilies();
-        const window = BrowserWindow.getAllWindows().find((item) =>
-          item.webContents.getURL().startsWith("data:"),
+  for (const legacyTestId of [true, false]) {
+    const proof = await app.evaluate(
+      async ({ BrowserWindow }, html) => {
+        const controller = new globalThis.ChatGptBrowserController(
+          "data:text/html;charset=utf-8," + encodeURIComponent(html),
         );
-        return {
-          families,
-          ...(await window.webContents.executeJavaScript(
-            "({sends: window.sends, modelChanges: window.modelChanges})",
-          )),
-        };
-      } finally {
-        await controller.close();
-      }
-    }, nativeVersionSliderFixture());
+        try {
+          const families = await controller.probeNativeModelFamilies();
+          const window = BrowserWindow.getAllWindows().find((item) =>
+            item.webContents.getURL().startsWith("data:"),
+          );
+          return {
+            families,
+            ...(await window.webContents.executeJavaScript(
+              "({sends: window.sends, modelChanges: window.modelChanges})",
+            )),
+          };
+        } finally {
+          await controller.close();
+        }
+      },
+      legacyTestId
+        ? nativeVersionSliderFixture()
+        : nativeVersionSliderFixture().replace(
+            'data-testid="composer-intelligence-picker-content"',
+            'data-picker-content="current"',
+          ),
+    );
     assert.deepEqual(proof, {
       families: ["5.6", "6"],
       sends: 0,
@@ -308,11 +349,23 @@ try {
       "Mode E2E: native family discovery used enabled composer options without Send\n",
     );
   }
-  for (const [family, mode, override, reject, hiddenThumb] of [
+  for (const [
+    family,
+    mode,
+    override,
+    reject,
+    hiddenThumb,
+    currentPicker,
+    keyboardRecovery,
+  ] of [
     ["5.6", "high", null, false],
     ["5.6", "pro", null, false],
     ["6", "pro", null, false],
     ["6", "medium", null, false],
+    ["6", "instant", null, false],
+    ["6", "extra-high", null, false],
+    ["6", "medium", "GPT-5.6 Sol Thinking, Medium", true],
+    ["6", "high", "GPT-6 Astra Thinking, High", true],
     ["6", "pro", "GPT-7 Astra Pro, max", true],
     ["6", "pro", "GPT-5.6 Sol Pro, max", true],
     ["5.6", "high", "", true],
@@ -321,6 +374,13 @@ try {
     ["6.1", "medium", null, false],
     ["6.1", "high", "GPT-5.6 Sol Thinking, High", true],
     ["6.1", "pro", "GPT-6 Astra Pro, max", true],
+    ["6", "high", null, false, true, true],
+    ["6", "medium", null, false, true, true],
+    ["6", "pro", null, false, true, true],
+    ["5.6", "high", null, false, true, true],
+    ["6", "high", "5.6 高，第 3 個，共 5 個。", true, true, true],
+    ["6", "high", "6 Medium，第 2 個，共 5 個。", true, true, true],
+    ["6", "extra-high", null, false, true, true, true],
   ]) {
     const result = await app.evaluate(
       async ({ BrowserWindow }, { html, family, mode }) => {
@@ -354,6 +414,16 @@ try {
             output,
             error,
             receipts,
+            keyboardActivations: window
+              ? await window.webContents.executeJavaScript(
+                  "window.keyboardActivations || 0",
+                )
+              : 0,
+            ignoredPointerClicks: window
+              ? await window.webContents.executeJavaScript(
+                  "window.ignoredPointerClicks || 0",
+                )
+              : 0,
             sends: window
               ? await window.webContents.executeJavaScript("window.sends")
               : -1,
@@ -363,11 +433,25 @@ try {
         }
       },
       {
-        html: nativeVersionSliderFixture(
-          override,
-          hiddenThumb,
-          family === "6.1",
-        ),
+        html:
+          nativeVersionSliderFixture(
+            override,
+            hiddenThumb,
+            family === "6.1",
+            currentPicker,
+          ) +
+          (keyboardRecovery
+            ? `<script>
+          const originalModelClick = picker.onclick;
+          let modelControlReady = false;
+          window.keyboardActivations = 0; window.ignoredPointerClicks = 0;
+          picker.onclick = event => {
+            if (!modelControlReady && event.detail > 0) { window.ignoredPointerClicks++; return; }
+            if (!modelControlReady) { modelControlReady = true; window.keyboardActivations++; }
+            return originalModelClick(event);
+          };
+        </script>`
+            : ""),
         family,
         mode,
       },
@@ -379,6 +463,10 @@ try {
     } else {
       assert.equal(result.sends, 1, JSON.stringify(result));
       assert.equal(result.receipts.at(-1).confidence, "UI_VERIFIED");
+      if (keyboardRecovery) {
+        assert.equal(result.ignoredPointerClicks, 2, JSON.stringify(result));
+        assert.equal(result.keyboardActivations, 1, JSON.stringify(result));
+      }
       assert.equal(result.receipts.at(-1).backendIdentity, "NOT_OBSERVED");
     }
     process.stdout.write(

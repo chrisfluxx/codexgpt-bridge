@@ -111,6 +111,7 @@ import { composerModelControlTarget } from "./model-controls.js";
 import {
   availableModelModeLabels,
   modelPickerRoots,
+  revealModelFamilyOptions,
   readModelSlider,
   type ModelSliderState,
 } from "./model-picker-surface.js";
@@ -955,16 +956,7 @@ class ChatGptBrowserSession {
       await this.#execute<boolean>(
         window,
         "expose-native-family-options",
-        `(() => {
-        const candidates = (${modelPickerRoots.toString()})();
-        const roots = candidates.filter(root => !candidates.some(other => other !== root && root.contains(other)));
-        if (roots.length !== 1) return false;
-        const root = roots[0];
-        const panel = root.querySelector('[data-testid="composer-model-picker-slider-advanced-view"], [data-model-picker-view="simple"]');
-        const toggle = root.querySelector('[data-model-picker-view-toggle="true"][aria-hidden="false"], [role="menuitem"][aria-expanded="false"]');
-        if (panel && toggle instanceof HTMLElement) toggle.click();
-        return true;
-      })()`,
+        `(${revealModelFamilyOptions.toString()})(${modelPickerRoots.toString()})`,
       );
       await delay(250, signal);
       const observed = await this.#readSelection(window);
@@ -2303,6 +2295,8 @@ class ChatGptBrowserSession {
         [
           "native-tool-selection-active",
           "full-mcp-connector-unavailable",
+          "model-menu-unavailable",
+          "model-selection-missing",
         ].includes(error.diagnosticCode);
       if (
         !staleStopBlockedModelVerification &&
@@ -2374,6 +2368,8 @@ class ChatGptBrowserSession {
             [
               "native-tool-selection-active",
               "full-mcp-connector-unavailable",
+              "model-menu-unavailable",
+              "model-selection-missing",
             ].includes(recoveryError.diagnosticCode);
           if (!canRetrySameConversation) {
             if (bridgeOwnsComposerState)
@@ -3289,6 +3285,7 @@ class ChatGptBrowserSession {
       const deadline = Date.now() + 8_000;
       let clicks = 0;
       let clickedAt = 0;
+      let keyboardActivated = false;
       let state: ModelMenuKind;
       do {
         signal.throwIfAborted();
@@ -3305,6 +3302,18 @@ class ChatGptBrowserSession {
         ) {
           clicks++;
           clickedAt = Date.now();
+        }
+        // Attaching an App can move the composer while a pointer activation is
+        // in flight. Activate only the same verified, focusable model control;
+        // never use a keyboard shortcut on the composer or on an open popup.
+        if (
+          state === "closed" &&
+          clicks === 2 &&
+          !keyboardActivated &&
+          Date.now() - clickedAt >= 2_000 &&
+          (await this.#clickComposerModeControl(window, true))
+        ) {
+          keyboardActivated = true;
         }
         await delay(50, signal);
       } while (Date.now() < deadline);
@@ -3435,14 +3444,7 @@ class ChatGptBrowserSession {
     const selected = await this.#execute<boolean>(
       window,
       "select-requested-model",
-      `(() => {
-        const root = document.querySelector('[data-testid="composer-intelligence-picker-content"]');
-        if (!root) return false;
-        const panel = root.querySelector('[data-testid="composer-model-picker-slider-advanced-view"]');
-        const toggle = root.querySelector('[role="menuitem"][aria-expanded="false"]');
-        if (panel && toggle instanceof HTMLElement) toggle.click();
-        return true;
-      })()`,
+      `(${revealModelFamilyOptions.toString()})(${modelPickerRoots.toString()})`,
     );
     if (!selected && menu !== "models") {
       await this.#dismissChatGptMenus(window);
@@ -3467,8 +3469,9 @@ class ChatGptBrowserSession {
       })()`,
     );
     if (!clicked)
-      throw new Error(
+      throw new PreparationError(
         `Requested ChatGPT model ${family} is unavailable; no fallback model was selected.`,
+        "model-selection-missing",
       );
     await delay(200, signal);
     await this.#dismissChatGptMenus(window);
@@ -3733,8 +3736,9 @@ class ChatGptBrowserSession {
         await this.#selectModeViaIntelligenceConfigure(window, target, signal)
       )
         return;
-      throw new Error(
+      throw new PreparationError(
         `Requested ChatGPT model ${family} could not be selected. No prompt was submitted.`,
+        "model-menu-unavailable",
       );
     }
     const current = await this.#readSelection(window);
@@ -3841,8 +3845,11 @@ class ChatGptBrowserSession {
       );
     const state = await find();
     if (state === "disabled" || state === "ambiguous")
-      throw new Error(
+      throw new PreparationError(
         `ChatGPT ${mode} effort menu is ${state}. No prompt was submitted.`,
+        state === "disabled"
+          ? "model-selection-disabled"
+          : "model-selection-ambiguous",
       );
     if (state !== "selected") return false;
     await delay(150, signal);
@@ -3872,8 +3879,9 @@ class ChatGptBrowserSession {
       return false;
     }
     if (menuKind === "loading") {
-      throw new Error(
+      throw new PreparationError(
         "ChatGPT reasoning controls remained incomplete after the model menu opened.",
+        "model-menu-unavailable",
       );
     }
     if (menuKind !== "slider") return false;
@@ -3916,7 +3924,10 @@ class ChatGptBrowserSession {
       );
       if (pro === undefined) return false;
       if (pro.disabled)
-        throw new Error("ChatGPT Pro mode is disabled for this account.");
+        throw new PreparationError(
+          "ChatGPT Pro mode is disabled for this account.",
+          "model-selection-disabled",
+        );
       this.#sendMouseClick(window, pro.x, pro.y);
       await delay(300, signal);
       return true;
@@ -3945,7 +3956,10 @@ class ChatGptBrowserSession {
       !observedSlider.disabled &&
       observedSlider.value === plan.targetValue;
     if (!selected) {
-      throw new Error(`ChatGPT ${mode} reasoning level could not be selected.`);
+      throw new PreparationError(
+        `ChatGPT ${mode} reasoning level could not be selected.`,
+        "model-selection-mismatch",
+      );
     }
     if (mode === "pro" && proSliderModel !== undefined) {
       const confirmed = await this.#execute<boolean>(
@@ -3960,8 +3974,9 @@ class ChatGptBrowserSession {
         })()`,
       );
       if (!confirmed) {
-        throw new Error(
+        throw new PreparationError(
           "ChatGPT did not confirm Pro for the current model at the selected slider position. No prompt was submitted.",
+          "model-selection-mismatch",
         );
       }
     }
@@ -4015,8 +4030,9 @@ class ChatGptBrowserSession {
       const before = await this.#readConfigureOptions(window);
       const family = target.model ?? before.selectedModel;
       if (!family)
-        throw new Error(
+        throw new PreparationError(
           "ChatGPT did not expose its current model in Intelligence Configure.",
+          "model-selection-missing",
         );
       await this.#selectConfigureModel(window, family, signal);
       await this.#selectConfigureMode(window, target.mode, signal);
@@ -4038,8 +4054,9 @@ class ChatGptBrowserSession {
         target.effort === undefined ||
         selected.selectedEffort === target.effort;
       if (!modelSelected || !modeSelected || !effortSelected) {
-        throw new Error(
+        throw new PreparationError(
           `ChatGPT Intelligence Configure did not confirm ${target.label} (${formatConfigureOptions(selected)}).`,
+          "model-selection-mismatch",
         );
       }
       return true;
@@ -4070,17 +4087,25 @@ class ChatGptBrowserSession {
     );
   }
 
-  async #clickComposerModeControl(window: ChatGptWindow): Promise<boolean> {
+  async #clickComposerModeControl(
+    window: ChatGptWindow,
+    keyboard = false,
+  ): Promise<boolean> {
     const target = await this.#execute<
       | { readonly x: number; readonly y: number; readonly expanded: boolean }
       | undefined
     >(
       window,
       "click-intelligence-mode-control",
-      `(${composerModelControlTarget.toString()})()`,
+      `(${composerModelControlTarget.toString()})(${JSON.stringify(keyboard)})`,
     );
     if (target === undefined || target.expanded) return false;
-    this.#sendMouseClick(window, target.x, target.y);
+    if (keyboard) {
+      window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+      window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+    } else {
+      this.#sendMouseClick(window, target.x, target.y);
+    }
     return true;
   }
 

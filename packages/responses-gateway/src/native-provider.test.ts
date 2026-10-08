@@ -288,6 +288,40 @@ for (const transport of ["http", "websocket"] as const) {
   );
 }
 
+it("reports deterministic model selection failures as terminal invalid prompts", async () => {
+  const gateway = new ResponsesGateway({
+    port: 0,
+    runWebTurn: async () => {
+      throw Object.assign(new Error("Selected model did not match."), {
+        code: "chatgpt_web_preparation_failed",
+        diagnosticCode: "model-selection-mismatch",
+      });
+    },
+  });
+  const address = await gateway.start();
+  try {
+    const response = await fetch(address.baseUrl + "/responses", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "codexgpt-bridge/high",
+        input: "test",
+        stream: true,
+      }),
+    });
+    const body = await response.text();
+    assert.match(body, /response.failed/);
+    assert.match(body, /"code":"invalid_prompt"/);
+    assert.match(body, /Selected model did not match/);
+    assert.doesNotMatch(body, /response.completed/);
+  } finally {
+    await gateway.close();
+  }
+});
+
 it("does not repair or execute tools after visible text fails", async () => {
   let calls = 0;
   const gateway = new ResponsesGateway({

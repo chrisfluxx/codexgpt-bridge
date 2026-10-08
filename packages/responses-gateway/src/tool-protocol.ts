@@ -275,11 +275,22 @@ function requestedSubagentCount(prompt: string): number | undefined {
 }
 
 function explicitlyRequestsCodexTool(prompt: string): boolean {
+  // A negative instruction such as "Do not call tools" is not a tool request.
+  // Keep other sentences so a separate positive request can still require tools.
+  const affirmative = prompt
+    .replace(
+      /\b(?:do\s+not|don't|never|must\s+not|should\s+not|avoid)\s+(?:use|call|invoke|run|using|calling|invoking|running)\b[^.!?;\n。！？；]*/giu,
+      "",
+    )
+    .replace(
+      /(?:不要|不得|禁止|無需|无需|不必|不用)[^.!?;\n。！？；]*工具[^.!?;\n。！？；]*/gu,
+      "",
+    );
   const action =
     /(?:請|请)?(?:使用|透過|通过|呼叫|调用|執行|执行)|(?:^|[\s，,：:])用(?=\s*(?:Codex\s*)?工具)|\b(?:use|call|invoke|run)\b/iu;
   const tool =
     /(?:Codex\s*)?工具|(?:Codex\s*)?\btools?\b|\bCodex\b.{0,24}\btools?\b/iu;
-  return action.test(prompt) && tool.test(prompt);
+  return action.test(affirmative) && tool.test(affirmative);
 }
 
 function structuredOutputContract(

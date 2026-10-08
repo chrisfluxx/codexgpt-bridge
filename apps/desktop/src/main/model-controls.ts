@@ -1,5 +1,7 @@
 /** Injected into the page. Only a model control may supply a mouse target. */
-export function composerModelControlTarget():
+export function composerModelControlTarget(
+  focus = false,
+):
   | { readonly x: number; readonly y: number; readonly expanded: boolean }
   | undefined {
   const visible = (element: Element): boolean => {
@@ -34,7 +36,7 @@ export function composerModelControlTarget():
     return Boolean(form?.contains(element) || nearByGeometry);
   };
   const modeLabel =
-    /^(?:Extended Pro|Pro Extended|Pro|Thinking|Instant|Medium|High|Extra[- ]High|XHigh|Low|Light|Standard|Extended|Heavy|(?:Light|Standard|Extended|Heavy)\s+(?:Pro|Thinking)|(?:Instant|Thinking|Pro)\s*[\u2022\u00b7]?\s*(?:Light|Standard|Extended|Heavy)|(?:GPT[-\s]*)?\d+(?:\.\d+)*(?:\s+(?:Instant|Thinking|Pro|Medium|High|Extra High))(?:\s+(?:Light|Standard|Extended|Heavy))?|\u5373\u6642|\u5373\u65f6|\u4f4e|\u4e2d|\u4e2d\u7b49|\u9ad8|\u6975\u9ad8|\u6781\u9ad8)$/i;
+    /^(?:Extended Pro|Pro Extended|Pro|Thinking|Instant|Medium|High|Extra[- ]High|XHigh|Low|Light|Standard|Extended|Heavy|(?:Light|Standard|Extended|Heavy)\s+(?:Pro|Thinking)|(?:Instant|Thinking|Pro)\s*[\u2022\u00b7]?\s*(?:Light|Standard|Extended|Heavy)|(?:GPT[-\s]*)?\d+(?:\.\d+)*(?:\s+(?:Sol|Astra))?\s*(?:Instant|Thinking|Pro|Medium|High|Extra High|即時|即时|低|中等|中|高|極高|极高)(?:\s+(?:Light|Standard|Extended|Heavy))?|\u5373\u6642|\u5373\u65f6|\u4f4e|\u4e2d|\u4e2d\u7b49|\u9ad8|\u6975\u9ad8|\u6781\u9ad8)$/i;
   const buttons = [
     ...document.querySelectorAll<HTMLElement>('button, [role="button"]'),
   ].filter(
@@ -86,6 +88,11 @@ export function composerModelControlTarget():
   const hit = document.elementFromPoint(x, y);
   // An overlay can cover a visible control. Never click whatever occupies its coordinates.
   if (!hit || !target.contains(hit)) return undefined;
+  if (focus) {
+    if (target.tabIndex < 0) return undefined;
+    target.focus({ preventScroll: true });
+    if (document.activeElement !== target) return undefined;
+  }
   return {
     x,
     y,

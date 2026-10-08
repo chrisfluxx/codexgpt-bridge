@@ -1911,6 +1911,11 @@ function providerFailure(error: unknown): {
     error instanceof Error &&
     "code" in error &&
     error.code === "chatgpt_web_session_expired";
+  const modelSelectionFailure =
+    preparation &&
+    "diagnosticCode" in error &&
+    typeof error.diagnosticCode === "string" &&
+    error.diagnosticCode.startsWith("model-");
   const sessionUnavailable =
     error instanceof Error &&
     "code" in error &&
@@ -1949,7 +1954,9 @@ function providerFailure(error: unknown): {
             : contextLimit
               ? "bridge_context_limit_exceeded"
               : preparation
-                ? "codexgpt_bridge_preparation_failed"
+                ? modelSelectionFailure
+                  ? "invalid_prompt"
+                  : "codexgpt_bridge_preparation_failed"
                 : invalidResponseFormatRequest
                   ? "invalid_response_format"
                   : invalidStructuredOutput
@@ -2096,7 +2103,7 @@ function bridgeModel(
     supported_reasoning_levels: (route.supportedEfforts ?? [route.effort]).map(
       (effort) => ({ effort, description: `${route.displayName} · ${effort}` }),
     ),
-    visibility: "list",
+    visibility: route.contextMultiplier ? "hide" : "list",
     supported_in_api: true,
     // gpt-5.6 templates currently opt into Responses Lite, which moves every
     // client tool schema into an input.additional_tools item and leaves the
@@ -2147,7 +2154,7 @@ export function buildStartupModelsPayload(
   availableModes?: readonly BridgeWebMode[],
   accountProfile: BridgeAccountContextProfile = "compatibility",
   nativeFamilies?: readonly BridgeNativeModelFamily[],
-  nativeRoutesEnabled = true,
+  nativeRoutesEnabled: boolean | "simple" = true,
 ): unknown {
   const record = asRecord(existingPayload);
   if (record === undefined || !Array.isArray(record.models)) {
@@ -2218,7 +2225,7 @@ export function mergeModelsPayload(
   availableModes?: readonly BridgeWebMode[],
   accountProfile: BridgeAccountContextProfile = "compatibility",
   nativeFamilies?: readonly BridgeNativeModelFamily[],
-  nativeRoutesEnabled = true,
+  nativeRoutesEnabled: boolean | "simple" = true,
 ): unknown {
   const record = asRecord(originalProviderPayload);
   if (record === undefined || !Array.isArray(record.models))
@@ -2236,10 +2243,13 @@ export function mergeModelsPayload(
     families,
     nativeRoutesEnabled,
   );
+  const hasNamedRoutes = nativeRoutes.some((route) => !route.contextMultiplier);
   models.push(
-    ...availableBridgeRoutes(availableModes).map((route, index) =>
-      bridgeModel(template, route, 50 + index, accountProfile),
-    ),
+    ...availableBridgeRoutes(availableModes).map((route, index) => ({
+      ...bridgeModel(template, route, 50 + index, accountProfile),
+      // Retain legacy IDs for existing chats while named routes own the picker.
+      visibility: hasNamedRoutes ? "hide" : "list",
+    })),
     ...nativeRoutes.map((route, index) =>
       bridgeModel(template, route, 30 + index, accountProfile),
     ),
@@ -2284,7 +2294,7 @@ export function buildWebOnlyModelsPayload(
   availableModes?: readonly BridgeWebMode[],
   accountProfile: BridgeAccountContextProfile = "compatibility",
   nativeFamilies?: readonly BridgeNativeModelFamily[],
-  nativeRoutesEnabled = true,
+  nativeRoutesEnabled: boolean | "simple" = true,
 ): unknown {
   const existing = asRecord(payload);
   // A Web-only snapshot is already compiled against the installed native schema.
@@ -2616,11 +2626,12 @@ export class ResponsesGateway {
     const route = bridgeWebModelRoute(model);
     if (route === undefined) return undefined;
     if (route.supportedEfforts) {
-      if (!(await this.#options.fullMcp?.enabled())) return undefined;
+      const fullEnabled = (await this.#options.fullMcp?.enabled()) === true;
       const available = availableNativeModelRoutes(
         await this.#availableWebModes(),
         (await this.#options.accountContextProfile?.()) ?? "compatibility",
         (await this.#options.nativeModelFamilies?.()) ?? [],
+        fullEnabled ? true : "simple",
       );
       const native = available.find(
         (candidate) => candidate.slug === route.slug,
@@ -3091,7 +3102,9 @@ export class ResponsesGateway {
               availableModes,
               await this.#options.accountContextProfile?.(),
               await this.#options.nativeModelFamilies?.(),
-              (await this.#options.fullMcp?.enabled()) === true,
+              (await this.#options.fullMcp?.enabled()) === true
+                ? true
+                : "simple",
             ),
           );
           return;
@@ -3369,7 +3382,7 @@ export class ResponsesGateway {
         await this.#availableWebModes(),
         await this.#options.accountContextProfile?.(),
         await this.#options.nativeModelFamilies?.(),
-        (await this.#options.fullMcp?.enabled()) === true,
+        (await this.#options.fullMcp?.enabled()) === true ? true : "simple",
       ),
     );
   }

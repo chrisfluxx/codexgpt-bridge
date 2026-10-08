@@ -54,12 +54,56 @@ it("requires both a checked native family and the exact active version descripti
       "REJECTED",
     );
   assert.equal(modelSelectionLabelMatches("bridge-native:6", "最新的"), true);
+  assert.equal(modelSelectionLabelMatches("bridge-native:6", "GPT-6"), true);
+  assert.equal(
+    modelSelectionLabelMatches("bridge-native:6", "GPT-6 Sol"),
+    true,
+  );
+  assert.equal(modelSelectionLabelMatches("bridge-native:6", "6"), true);
+  assert.equal(
+    modelSelectionLabelMatches("bridge-native:6", "GPT-6.1 Sol"),
+    false,
+  );
   assert.equal(modelSelectionLabelMatches("bridge-native:6", "GPT-7"), false);
   assert.equal(
     nativeModelDescriptionsMatch("bridge-native:6", "medium", [
       "5.6 Sol Thinking, Medium",
     ]),
+    false,
+  );
+  assert.equal(
+    nativeModelDescriptionsMatch("bridge-native:6", "medium", [
+      "6 Sol Thinking, Medium",
+    ]),
     true,
+  );
+  assert.equal(
+    nativeModelDescriptionsMatch("bridge-native:6", "extra-high", [
+      "GPT-6 Sol Thinking, Extra High",
+    ]),
+    true,
+  );
+  assert.equal(
+    nativeModelDescriptionsMatch("bridge-native:6", "high", [
+      "GPT-6 Astra Thinking, High",
+    ]),
+    false,
+  );
+  assert.equal(
+    verifyModelSelection("op", "high", "bridge-native:6", {
+      ...high,
+      model: "GPT-6",
+      modelDescriptions: ["GPT-6 Sol Thinking, High"],
+    }).confidence,
+    "UI_VERIFIED",
+  );
+  assert.equal(
+    verifyModelSelection("op", "high", "bridge-native:6", {
+      ...high,
+      model: "GPT-6",
+      modelDescriptions: ["GPT-5.6 Sol Thinking, High"],
+    }).confidence,
+    "REJECTED",
   );
   assert.equal(
     nativeModelDescriptionsMatch("bridge-native:6", "pro", [

@@ -15,10 +15,31 @@ const modes: Record<BridgeNativeEffort, BridgeWebMode> = {
 const solEfforts = ["low", "medium", "high", "xhigh"] as const;
 const nativeRoutes: readonly BridgeWebModelRoute[] = [
   {
+    slug: "codexgpt-bridge/gpt-6-sol",
+    displayName: "GPT-6 Sol · Bridge",
+    description:
+      "GPT-6 through the ChatGPT model picker with a verified Sol effort.",
+    effort: "high",
+    mode: "high",
+    contextWindow: 95_000,
+    supportedEfforts: solEfforts,
+    nativeFamily: "6",
+  },
+  {
+    slug: "codexgpt-bridge/gpt-6-sol-instant",
+    displayName: "GPT-6 Sol Instant · Bridge",
+    description: "GPT-6 Instant through the ChatGPT model picker.",
+    effort: "low",
+    mode: "instant",
+    contextWindow: 95_000,
+    supportedEfforts: ["low"],
+    nativeFamily: "6",
+  },
+  {
     slug: "codexgpt-bridge/gpt-6.1-sol",
     displayName: "GPT-6.1 Sol · Bridge",
     description:
-      "GPT-6.1 Sol through the Full Codex harness, when explicitly available in the browser picker.",
+      "GPT-6.1 Sol when explicitly available in the ChatGPT model picker.",
     effort: "high",
     mode: "high",
     contextWindow: 95_000,
@@ -29,7 +50,7 @@ const nativeRoutes: readonly BridgeWebModelRoute[] = [
     slug: "codexgpt-bridge/gpt-6.1-sol-instant",
     displayName: "GPT-6.1 Sol Instant · Bridge",
     description:
-      "GPT-6.1 Sol at low effort through the Full Codex harness, when explicitly available in the browser picker.",
+      "GPT-6.1 Sol at low effort when explicitly available in the ChatGPT model picker.",
     effort: "low",
     mode: "instant",
     contextWindow: 95_000,
@@ -39,7 +60,7 @@ const nativeRoutes: readonly BridgeWebModelRoute[] = [
   {
     slug: "codexgpt-bridge/gpt-5.6-sol",
     displayName: "GPT-5.6 Sol · Bridge",
-    description: "GPT-5.6 Sol through the Full Codex harness.",
+    description: "GPT-5.6 Sol through the ChatGPT model picker.",
     effort: "high",
     mode: "high",
     contextWindow: 95_000,
@@ -49,7 +70,7 @@ const nativeRoutes: readonly BridgeWebModelRoute[] = [
   {
     slug: "codexgpt-bridge/gpt-5.6-sol-instant",
     displayName: "GPT-5.6 Sol Instant · Bridge",
-    description: "GPT-5.6 Sol Instant through the Full Codex harness.",
+    description: "GPT-5.6 Sol Instant through the ChatGPT model picker.",
     effort: "low",
     mode: "instant",
     contextWindow: 95_000,
@@ -60,7 +81,7 @@ const nativeRoutes: readonly BridgeWebModelRoute[] = [
     slug: "codexgpt-bridge/gpt-5.6-sol-pro",
     displayName: "GPT-5.6 Sol Pro · Bridge",
     description:
-      "GPT-5.6 Sol Pro with max effort through the Full Codex harness.",
+      "GPT-5.6 Sol Pro with max effort through the ChatGPT model picker.",
     effort: "max",
     mode: "pro",
     contextWindow: 95_000,
@@ -70,7 +91,7 @@ const nativeRoutes: readonly BridgeWebModelRoute[] = [
   {
     slug: "codexgpt-bridge/gpt-6-pro",
     displayName: "GPT-6 Pro · Bridge",
-    description: "GPT-6 Pro with max effort through the Full Codex harness.",
+    description: "GPT-6 Pro with max effort through the ChatGPT model picker.",
     effort: "max",
     mode: "pro",
     contextWindow: 95_000,
@@ -115,11 +136,18 @@ export function availableNativeModelRoutes(
   availableModes: readonly BridgeWebMode[] | undefined,
   profile: BridgeAccountContextProfile,
   families: readonly BridgeNativeModelFamily[],
-  enabled = true,
+  enabled: boolean | "simple" = true,
 ): readonly BridgeWebModelRoute[] {
   if (!enabled || profile === "compatibility") return [];
   const available = availableModes ? new Set(availableModes) : undefined;
   return BRIDGE_NATIVE_MODEL_ROUTES.flatMap((route) => {
+    // Simple can pin an exact browser model, but cannot run the Full-only
+    // staged-context transaction or Luna's private checkpoint protocol.
+    if (
+      enabled === "simple" &&
+      (route.contextMultiplier || route.slug === "codexgpt-bridge/luna-native")
+    )
+      return [];
     if (route.nativeFamily && !families.includes(route.nativeFamily)) return [];
     if (route.mode === "pro" && profile !== "pro") return [];
     if (/-instant(?:-3x)?$/.test(route.slug) && profile === "pro") return [];
