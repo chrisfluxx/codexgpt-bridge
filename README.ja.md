@@ -10,6 +10,8 @@ CodexGPT Bridge は Codex を、ログイン済みの ChatGPT Web セッショ�
 
 本プロジェクトは独立した第三者のプロジェクトであり、OpenAI とは提携していません。
 
+GPT プラグインと Full MCP の設定手順：[English](README.md#chatgpt-plugin-setup) · [繁體中文](README.zh-TW.md#chatgpt-外掛設定)。
+
 ## インストール
 
 このリポジトリの **[Releases](https://github.com/chrisfluxx/codexgpt-bridge/releases/latest)** ページから、OS に対応するインストーラーをダウンロードしてください。

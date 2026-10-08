@@ -9,6 +9,8 @@ CodexGPT Bridge 将 Codex 连接到已登录的 ChatGPT 网页会话，支持模
 
 本项目是独立的第三方项目，与 OpenAI 没有隶属关系。
 
+GPT 插件与 Full MCP 设置教程：[繁體中文](README.zh-TW.md#chatgpt-外掛設定) · [English](README.md#chatgpt-plugin-setup)。
+
 ## 安装
 
 从本仓库的 **[Releases](https://github.com/chrisfluxx/codexgpt-bridge/releases/latest)** 页面下载适合你的操作系统的安装包。
