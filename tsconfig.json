@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/responses-gateway"
+    },
+    {
+      "path": "./apps/cli"
+    },
+    {
+      "path": "./apps/desktop"
+    }
+  ]
+}

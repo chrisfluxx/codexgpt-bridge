@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm i18n:check
+      - run: pnpm test
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm secret:scan
+      - run: pnpm audit:prod
+
+  windows-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm desktop:e2e
+      - run: pnpm test:modes
+      - run: pnpm test:full-context
+      - run: pnpm test:parity
+      - run: pnpm test:luna
+      - run: pnpm package:win:dir
+      - run: pnpm desktop:e2e:packaged
+      - run: node scripts/parity-desktop-e2e.mjs "--executable=${{ github.workspace }}/release/win-unpacked/CodexGPT Bridge.exe"
+      - run: node scripts/desktop-update-reminder-e2e.mjs "--executable=${{ github.workspace }}/release/win-unpacked/CodexGPT Bridge.exe"
+      - run: node scripts/desktop-online-update-e2e.mjs "--executable=${{ github.workspace }}/release/win-unpacked/CodexGPT Bridge.exe"
+      - run: pnpm package:win:local
+      - run: pnpm installer:e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codexgpt-bridge-windows
+          path: |
+            release/CodexGPT-Bridge-Setup-*.exe
+            release/CodexGPT-Bridge-Setup-*.exe.blockmap
+
+  macos-package:
+    env:
+      CODEXGPT_BRIDGE_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/release-manifest.json
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x64
+          - os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm desktop:e2e
+      - run: pnpm package:mac:${{ matrix.arch }}
+      - run: pnpm desktop:e2e:packaged:portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codexgpt-bridge-macos-${{ matrix.arch }}
+          path: |
+            release/CodexGPT-Bridge-*-*.dmg
+            release/CodexGPT-Bridge-*-*.zip
+
+  linux-package:
+    env:
+      CODEXGPT_BRIDGE_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/release-manifest.json
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: xvfb-run -a pnpm desktop:e2e
+      - run: pnpm package:linux:${{ matrix.arch }}
+      - run: xvfb-run -a pnpm desktop:e2e:packaged:portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codexgpt-bridge-linux-${{ matrix.arch }}
+          path: |
+            release/CodexGPT-Bridge-*-*.AppImage
+            release/CodexGPT-Bridge-*-*.deb
+
+  release-manifest:
+    needs: [windows-package, macos-package, linux-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: codexgpt-bridge-*
+          path: release
+          merge-multiple: true
+      - run: node scripts/generate-release-manifest.mjs
+      - run: node scripts/verify-release-manifest.mjs --require-complete
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codexgpt-bridge-release-manifest
+          path: |
+            release/release-manifest.json
+            release/*.sha256

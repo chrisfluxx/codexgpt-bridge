@@ -1,0 +1,4 @@
+{
+  "input": "Explain the purpose of the offline Bridge prompt lab without calling tools.",
+  "text": { "verbosity": "low" }
+}

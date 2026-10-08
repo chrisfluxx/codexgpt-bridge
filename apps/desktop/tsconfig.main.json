@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist/main",
+    "rootDir": "src/main"
+  },
+  "references": [
+    {
+      "path": "../../packages/responses-gateway"
+    }
+  ],
+  "include": ["src/main/**/*.ts", "src/main/**/*.cts"]
+}

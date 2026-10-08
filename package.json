@@ -1,0 +1,186 @@
+{
+  "name": "codexgpt-bridge",
+  "version": "0.1.94",
+  "private": true,
+  "description": "Bring ChatGPT Web models into Codex.",
+  "author": "CodexGPT Bridge contributors",
+  "main": "apps/desktop/dist/main/main.js",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/generate-release-channel.mjs && node scripts/clean.mjs && tsc -b --force && node scripts/generate-third-party-notices.mjs && pnpm --filter @codexgpt-bridge/desktop build:renderer",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "i18n:check": "node scripts/check-i18n-catalogs.mjs",
+    "secret:scan": "node scripts/secret-scan.mjs && pnpm public:check",
+    "audit:prod": "pnpm audit --prod --audit-level high",
+    "test": "pnpm build && node --test apps/desktop/dist/main/durable-json.test.js apps/desktop/dist/main/parity-additions.test.js apps/cli/dist/provider-client.test.js apps/desktop/dist/main/codex-interrupt-hook.test.js apps/desktop/dist/main/provider-control.test.js apps/desktop/dist/main/web-only-integration.test.js apps/desktop/dist/main/authentication-popup.test.js apps/desktop/dist/main/passkey-login-state.test.js apps/desktop/dist/main/macos-passkey-login.test.js apps/desktop/dist/main/browser-smoke.test.js apps/desktop/dist/main/browser-delay.test.js apps/desktop/dist/main/browser-controls.test.js apps/desktop/dist/main/model-selection.test.js apps/desktop/dist/main/model-diagnostics.test.js apps/desktop/dist/main/operation-failure.test.js apps/desktop/dist/main/native-context.test.js apps/desktop/dist/main/provider-upstream.test.js apps/desktop/dist/main/transport-error-boundary.test.js apps/desktop/dist/main/tunnel-manager.test.js apps/desktop/dist/main/chatgpt-usage.test.js apps/desktop/dist/main/release-update.test.js apps/desktop/dist/main/update-reminders.test.js apps/desktop/dist/main/desktop-doctor.test.js apps/desktop/dist/main/cli-doctor.test.js apps/desktop/dist/main/retired-workspace-service.test.js packages/responses-gateway/dist/provider-lifecycle.test.js packages/responses-gateway/dist/full-turn-coordinator.test.js packages/responses-gateway/dist/full-parity.test.js packages/responses-gateway/dist/full-tool-result.test.js packages/responses-gateway/dist/full-native-registry.test.js packages/responses-gateway/dist/full-native-agent-audit.test.js packages/responses-gateway/dist/full-mcp-lifecycle.test.js packages/responses-gateway/dist/full-checkpoint.test.js packages/responses-gateway/dist/luna-checkpoints.test.js packages/responses-gateway/dist/web-only-provider.test.js packages/responses-gateway/dist/native-provider.test.js apps/desktop/dist/main/codex-cli.test.js apps/desktop/dist/main/chatgpt-completion.test.js apps/desktop/dist/main/chatgpt-image-download.test.js apps/desktop/dist/main/chatgpt-session-probe.test.js apps/desktop/dist/main/chatgpt-backend-recovery.test.js apps/desktop/dist/main/chatgpt-conversations.test.js apps/desktop/dist/main/chatgpt-mode.test.js apps/desktop/dist/main/shared-serial-runner.test.js packages/responses-gateway/dist/input-tokens.test.js packages/responses-gateway/dist/context-budgets.test.js packages/responses-gateway/dist/native-model-routes.test.js packages/responses-gateway/dist/full-context-transfer.test.js packages/responses-gateway/dist/compaction-staging.test.js packages/responses-gateway/dist/tool-protocol.test.js packages/responses-gateway/dist/responses-server.test.js",
+    "clean": "node scripts/clean.mjs",
+    "cli": "pnpm --filter @codexgpt-bridge/cli start",
+    "desktop": "pnpm build && pnpm --filter @codexgpt-bridge/desktop start",
+    "desktop:e2e": "pnpm build && node scripts/desktop-e2e.mjs",
+    "test:provider-repair": "pnpm build && node scripts/provider-repair-e2e.mjs",
+    "test:web-only": "pnpm build && node --test apps/desktop/dist/main/web-only-integration.test.js packages/responses-gateway/dist/web-only-provider.test.js && node scripts/web-only-desktop-e2e.mjs",
+    "test:dom": "pnpm build && node scripts/chatgpt-dom-e2e.mjs",
+    "test:modes": "pnpm build && node scripts/chatgpt-mode-e2e.mjs",
+    "test:full-context": "pnpm build && node scripts/chatgpt-full-context-e2e.mjs",
+    "test:luna": "pnpm build && node scripts/chatgpt-luna-e2e.mjs",
+    "test:full:codex-agents": "node scripts/full-codex-agent-smoke.mjs",
+    "test:projects": "pnpm build && node --test apps/desktop/dist/main/chatgpt-projects.test.js apps/desktop/dist/main/codex-projects.test.js && node scripts/chatgpt-projects-e2e.mjs",
+    "test:titles": "pnpm build && node --test apps/desktop/dist/main/codex-thread-title.test.js && node scripts/chatgpt-titles-e2e.mjs",
+    "test:preparation": "pnpm build && node scripts/chatgpt-preparation-e2e.mjs",
+    "test:temporary": "pnpm build && node --test apps/desktop/dist/main/chatgpt-conversations.test.js && node scripts/chatgpt-temporary-e2e.mjs",
+    "test:picker": "pnpm build && node scripts/chatgpt-picker-e2e.mjs && node scripts/chatgpt-slider-contract-e2e.mjs",
+    "test:safety": "pnpm build && node --test apps/desktop/dist/main/chatgpt-rate-limit.test.js packages/responses-gateway/dist/rate-limit.test.js && node scripts/chatgpt-safety-e2e.mjs && node scripts/chatgpt-auth-popup-e2e.mjs && node scripts/chatgpt-backend-recovery-e2e.mjs && node scripts/chatgpt-challenge-e2e.mjs",
+    "test:challenge": "pnpm build && node scripts/chatgpt-page-session-e2e.mjs && node scripts/chatgpt-backend-recovery-e2e.mjs && node scripts/chatgpt-challenge-e2e.mjs",
+    "test:browser-smoke": "pnpm build && node scripts/chatgpt-browser-smoke-e2e.mjs",
+    "test:chrome-login": "pnpm build && node scripts/chrome-manual-login-e2e.mjs && node scripts/desktop-chrome-e2e.mjs",
+    "desktop:e2e:packaged": "node scripts/desktop-e2e.mjs --packaged",
+    "desktop:e2e:tray": "node scripts/desktop-tray-e2e.mjs",
+    "desktop:e2e:updates": "node scripts/desktop-update-reminder-e2e.mjs",
+    "desktop:e2e:packaged:portable": "node scripts/portable-packaged-e2e.mjs",
+    "installer:e2e": "node scripts/build-installer-smoke.mjs && node scripts/windows-installer-smoke.mjs",
+    "package:win:dir": "pnpm build && electron-builder --publish never --win dir --x64",
+    "package:win": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --win nsis --x64 && node scripts/generate-release-manifest.mjs",
+    "package:win:local": "pnpm build && electron-builder --publish never --win nsis --x64 && node scripts/generate-release-manifest.mjs",
+    "package:mac:dir": "pnpm build && electron-builder --publish never --mac dir --x64 --arm64",
+    "package:mac": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --mac dmg zip --x64 --arm64",
+    "package:mac:x64": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --mac dmg zip --x64",
+    "package:mac:arm64": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --mac dmg zip --arm64",
+    "package:linux:dir": "pnpm build && electron-builder --publish never --linux dir --x64 --arm64",
+    "package:linux": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --linux AppImage deb --x64 --arm64",
+    "package:linux:x64": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --linux AppImage deb --x64",
+    "package:linux:arm64": "node scripts/generate-release-channel.mjs --require-url && pnpm build && electron-builder --publish never --linux AppImage deb --arm64",
+    "release:manifest": "node scripts/generate-release-manifest.mjs",
+    "release:manifest:verify": "node scripts/verify-release-manifest.mjs",
+    "release:validate": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm i18n:check && pnpm secret:scan && pnpm audit:prod && pnpm test && pnpm test:projects && pnpm test:titles && pnpm test:preparation && pnpm test:temporary && pnpm test:safety && pnpm test:browser-smoke && pnpm test:picker && pnpm test:modes && pnpm test:full-context && pnpm test:luna && pnpm desktop:e2e && pnpm package:win:dir && pnpm desktop:e2e:packaged && pnpm desktop:e2e:online-updates && pnpm package:win:local && pnpm installer:e2e",
+    "desktop:dev": "pnpm build && electron . --dev",
+    "test:parity": "pnpm build && node scripts/parity-desktop-e2e.mjs",
+    "licenses:generate": "node scripts/generate-third-party-notices.mjs",
+    "public:check": "node scripts/check-public-content.mjs",
+    "desktop:e2e:online-updates": "node scripts/desktop-online-update-e2e.mjs"
+  },
+  "dependencies": {
+    "@codexgpt-bridge/responses-gateway": "workspace:*",
+    "playwright-core": "1.62.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.15.30",
+    "electron": "41.10.7",
+    "electron-builder": "26.15.3",
+    "eslint": "10.9.1",
+    "prettier": "3.9.6",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.69.0"
+  },
+  "build": {
+    "appId": "io.codexgpt.bridge",
+    "productName": "CodexGPT Bridge",
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [],
+    "files": [
+      "apps/desktop/dist/**/*",
+      "package.json",
+      "apps/cli/dist/**/*",
+      "packages/responses-gateway/dist/**/*",
+      "apps/cli/package.json",
+      "apps/desktop/package.json",
+      "packages/responses-gateway/package.json",
+      "!**/*.test.*",
+      "!**/*.map",
+      "!**/*.d.ts"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "assets/bridge-icon.ico",
+      "artifactName": "CodexGPT-Bridge-Setup-${version}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraFiles": [
+        {
+          "from": "scripts/codexgpt-bridge.cmd",
+          "to": "codexgpt-bridge.cmd"
+        }
+      ]
+    },
+    "mac": {
+      "icon": "assets/bridge-icon.icns",
+      "artifactName": "CodexGPT-Bridge-${version}-${arch}.${ext}",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "assets/bridge-icon.png",
+      "artifactName": "CodexGPT-Bridge-${version}-${arch}.${ext}",
+      "category": "Development",
+      "maintainer": "CodexGPT Bridge contributors",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CodexGPT Bridge",
+      "deleteAppDataOnUninstall": false
+    },
+    "extraResources": [
+      {
+        "from": "THIRD_PARTY_NOTICES.txt",
+        "to": "licenses/THIRD_PARTY_NOTICES.txt"
+      },
+      {
+        "from": "node_modules/electron/LICENSE",
+        "to": "licenses/Electron-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSES.chromium.html",
+        "to": "licenses/LICENSES.chromium.html"
+      }
+    ]
+  }
+}

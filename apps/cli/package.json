@@ -1,0 +1,13 @@
+{
+  "name": "@codexgpt-bridge/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codexgpt-bridge": "./dist/main.js"
+  },
+  "dependencies": {},
+  "scripts": {
+    "start": "node dist/main.js"
+  }
+}

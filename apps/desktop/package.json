@@ -1,0 +1,23 @@
+{
+  "name": "@codexgpt-bridge/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "build:renderer": "vite build",
+    "start": "electron dist/main/main.js"
+  },
+  "dependencies": {
+    "@codexgpt-bridge/responses-gateway": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "electron": "41.10.7",
+    "vite": "8.2.2"
+  }
+}
