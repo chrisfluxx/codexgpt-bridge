@@ -452,20 +452,19 @@ export function observeModelSelection(
           text,
         )?.[0];
       if (suffix) noteMode(el, suffix);
-      if (
-        modelLike(text) &&
-        !/\b(?:Pro|Thinking|Instant|High|Medium)\b/i.test(text)
-      )
-        models.push(text);
       // Some versions put model and mode in the same button. Keep the family label intact.
       const combined =
-        /^(.*?)\s+(Instant|Medium|High|Extra High|Pro|Thinking (?:Standard|Extended|Heavy))$/i.exec(
+        /^(.*?)\s+(Instant|Medium|High|Extra[- ]High|XHigh|Pro|Thinking (?:Standard|Extended|Heavy)|即時|即时|低|中等|中|高|極高|极高)$/i.exec(
           text,
         );
       if (combined && modelLike(combined[1]!)) {
         models.push(combined[1]!);
         noteMode(el, combined[2]!);
-      }
+      } else if (
+        modelLike(text) &&
+        !/\b(?:Pro|Thinking|Instant|High|Medium)\b/i.test(text)
+      )
+        models.push(text);
     }
     {
       for (const root of menuRoots) {
@@ -532,7 +531,21 @@ export function observeModelSelection(
       surface = "legacy";
     }
   }
-  const uniqueModels = [...new Set(models)];
+  // The family radio includes "GPT-" while the localized composer can omit
+  // it. Preserve the first checked label, but compare their actual identities.
+  const modelIdentity = (value: string): string =>
+    value
+      .normalize("NFKC")
+      .replace(/^GPT[-\s]*/i, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  const uniqueModels = models.filter(
+    (value, index) =>
+      models.findIndex(
+        (candidate) => modelIdentity(candidate) === modelIdentity(value),
+      ) === index,
+  );
   const uniqueModes = [...new Set(modes.map((item) => item.mode))];
   ambiguous ||= uniqueModels.length > 1 || uniqueModes.length > 1;
   if (!modes.length && !models.length) surface = "missing";

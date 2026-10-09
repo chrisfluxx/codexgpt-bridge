@@ -317,6 +317,7 @@ export type BridgeTextFormat =
     };
 
 export interface CompiledResponsesPrompt {
+  readonly forwardedCommentaryIds?: readonly string[];
   readonly context: BridgeContext;
   readonly compaction?: boolean;
   readonly toolChoice: unknown;
@@ -806,6 +807,23 @@ export function compileResponsesPrompt(body: unknown): CompiledResponsesPrompt {
   };
   return {
     prompt: prompt ?? "",
+    ...(() => {
+      const ids = Array.isArray(record.input)
+        ? record.input
+            .map(asRecord)
+            .filter(
+              (item) =>
+                item?.role === "assistant" && item.phase === "commentary",
+            )
+            .map((item) => item?.id)
+            .filter(
+              (id): id is string =>
+                typeof id === "string" &&
+                /^msg_bridge_commentary_[a-f0-9]{64}$/.test(id),
+            )
+        : [];
+      return ids.length ? { forwardedCommentaryIds: ids } : {};
+    })(),
     images,
     textFormat,
     ...(() => {

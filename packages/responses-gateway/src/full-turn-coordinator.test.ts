@@ -8,6 +8,8 @@ import {
 import { compileResponsesPrompt } from "./prompt.js";
 import { ProviderLifecycleController } from "./provider-lifecycle.js";
 import { FullNativeRegistry } from "./full-native-registry.js";
+import { publicCommentaryOutputId } from "./public-commentary.js";
+import type { BridgePublicCommentary } from "./public-commentary.js";
 import {
   BRIDGE_TEXT_FRAME_CLOSE,
   BRIDGE_TEXT_FRAME_OPEN,
@@ -693,6 +695,104 @@ it("reconnects streaming observers to the same Full generation without resubmiss
     assert.deepEqual(firstDeltas, ["Hello"]);
     assert.equal(browserRuns, 1);
   } finally {
+    coordinator.close();
+  }
+});
+
+it("replays public commentary on reconnect and skips commentary already delivered to Codex", async () => {
+  const coordinator = new FullTurnCoordinator(new FullTurnBroker());
+  const firstAbort = new AbortController();
+  const nextAbort = new AbortController();
+  const firstEntries: BridgePublicCommentary[] = [];
+  const nextEntries: BridgePublicCommentary[] = [];
+  const knownEntries: BridgePublicCommentary[] = [];
+  let browserRuns = 0;
+  let browser!: Parameters<FullTurnRunInput["runBrowser"]>[0];
+  let finish!: (value: string) => void;
+  let observed!: () => void;
+  const observedCommentary = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  const browserOutcome = new Promise<string>((resolve) => {
+    finish = resolve;
+  });
+  const input = fullInput({
+    runBrowser: async (request) => {
+      browserRuns++;
+      browser = request;
+      request.onCommentary?.({ messageId: "invalid/id", text: "ignored" });
+      request.onCommentary?.({ messageId: "empty", text: " " });
+      request.onCommentary?.({
+        messageId: "too-long",
+        text: "x".repeat(16_001),
+      });
+      request.onCommentary?.({
+        messageId: "progress-a",
+        text: `Checking files ${request.turnToken}`,
+      });
+      request.onCommentary?.({ messageId: "progress-a", text: "duplicate" });
+      return browserOutcome;
+    },
+  });
+  try {
+    const first = coordinator.run({
+      ...input,
+      requestSignal: firstAbort.signal,
+      onCommentary: (entry) => {
+        firstEntries.push(entry);
+        observed();
+      },
+    });
+    await withDeadline(observedCommentary);
+    assert.deepEqual(firstEntries, [
+      { messageId: "progress-a", text: "Checking files [redacted]" },
+    ]);
+    firstAbort.abort();
+    await assert.rejects(withDeadline(first), { name: "AbortError" });
+    const next = coordinator.run({
+      ...input,
+      requestSignal: nextAbort.signal,
+      onCommentary: (entry) => nextEntries.push(entry),
+    });
+    assert.deepEqual(nextEntries, firstEntries);
+    nextAbort.abort();
+    await assert.rejects(withDeadline(next), { name: "AbortError" });
+    const outputId = publicCommentaryOutputId("full-turn", "progress-a");
+    const compiled = compileResponsesPrompt({
+      metadata: { thread_id: "full-test", turn_id: "full-turn" },
+      input: [
+        { role: "user", content: "Say hello." },
+        {
+          id: outputId,
+          type: "message",
+          role: "assistant",
+          phase: "commentary",
+          content: [{ type: "output_text", text: "Checking files [redacted]" }],
+        },
+      ],
+    });
+    assert.deepEqual(compiled.forwardedCommentaryIds, [outputId]);
+    const known = coordinator.run({
+      ...input,
+      compiled,
+      onCommentary: (entry) => knownEntries.push(entry),
+    });
+    assert.deepEqual(knownEntries, []);
+    browser.onCommentary?.({
+      messageId: "progress-b",
+      text: "The checks passed.",
+    });
+    assert.deepEqual(knownEntries, [
+      { messageId: "progress-b", text: "The checks passed." },
+    ]);
+    finish("Hello world");
+    assert.deepEqual(await withDeadline(known), {
+      kind: "text",
+      text: "Hello world",
+    });
+    assert.equal(browserRuns, 1);
+  } finally {
+    finish?.("cancelled");
     coordinator.close();
   }
 });

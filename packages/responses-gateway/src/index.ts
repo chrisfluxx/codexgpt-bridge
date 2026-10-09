@@ -17,3 +17,4 @@ export {
   BridgeStreamError,
   isBridgeTextStreamCandidate,
 } from "./text-stream.js";
+export type { BridgePublicCommentary } from "./public-commentary.js";

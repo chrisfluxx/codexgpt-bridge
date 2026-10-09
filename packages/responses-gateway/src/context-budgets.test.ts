@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { resolveBridgeContextBudget } from "./context-budgets.js";
-import { bridgeCatalogWebModes } from "./native-model-routes.js";
+import {
+  resolveBridgeContextBudget,
+  resolveBridgeRouteContextBudget,
+} from "./context-budgets.js";
+import {
+  availableNativeModelRoutes,
+  bridgeCatalogWebModes,
+} from "./native-model-routes.js";
 import {
   bridgeExecutionLimitProblem,
   buildStartupModelsPayload,
@@ -75,6 +81,78 @@ it("separates standard account modes, Pro account modes, and the current bounded
     () => resolveBridgeContextBudget("pro", "standard"),
     /Pro-capable/u,
   );
+});
+
+it("stages verified GPT-5.6 and GPT-6 Full reasoning context while retaining bounded messages and Instant routes", () => {
+  const modes = ["instant", "medium", "high", "extra-high", "pro"] as const;
+  const full = availableNativeModelRoutes(modes, "pro", ["5.6", "6"]);
+  for (const slug of [
+    "gpt-6-sol",
+    "gpt-6-sol-3x",
+    "gpt-5.6-sol",
+    "gpt-5.6-sol-3x",
+  ]) {
+    const route = full.find((row) => row.slug === `codexgpt-bridge/${slug}`)!;
+    assert.deepEqual(route.supportedEfforts, ["medium", "high", "xhigh"]);
+    const budget = resolveBridgeRouteContextBudget(route, "pro");
+    assert.equal(budget.contextWindow, 240_000);
+    assert.equal(budget.hardInputTokenLimit, 240_000);
+    assert.equal(budget.autoCompactTokenLimit, 220_000);
+    assert.equal(budget.browserMessageTokenLimit, 103_000);
+    assert.equal(budget.browserComposerCharLimit, 500_000);
+    assert.equal(budget.stagedContext, true);
+  }
+  for (const slug of [
+    "gpt-5.6-sol-instant",
+    "gpt-6-sol-instant",
+    "gpt-6-pro",
+  ]) {
+    const route = full.find((row) => row.slug === `codexgpt-bridge/${slug}`)!;
+    const budget = resolveBridgeRouteContextBudget(route, "pro");
+    assert.equal(budget.stagedContext, undefined);
+    assert.equal(
+      budget.contextWindow,
+      slug === "gpt-6-pro" ? 112_193 : 111_193,
+    );
+  }
+  const simple = availableNativeModelRoutes(modes, "pro", ["6"], "simple").find(
+    (row) => row.slug === "codexgpt-bridge/gpt-6-sol",
+  )!;
+  assert.deepEqual(simple.supportedEfforts, ["low", "medium", "high", "xhigh"]);
+  assert.equal(
+    resolveBridgeRouteContextBudget(simple, "pro").contextWindow,
+    111_193,
+  );
+  const standard = availableNativeModelRoutes(modes, "standard", ["6"]).find(
+    (row) => row.slug === "codexgpt-bridge/gpt-6-sol",
+  )!;
+  assert.equal(
+    resolveBridgeRouteContextBudget(standard, "standard").contextWindow,
+    90_000,
+  );
+  assert.equal(standard.stagedContext, undefined);
+  const catalog = buildStartupModelsPayload({ models: [] }, modes, "pro", [
+    "5.6",
+    "6",
+  ]) as { models: Array<Record<string, unknown>> };
+  const model = catalog.models.find(
+    (row) => row.slug === "codexgpt-bridge/gpt-6-sol",
+  )!;
+  assert.equal(model.context_window, 240_000);
+  assert.equal(model.auto_compact_token_limit, 220_000);
+  assert.equal(model.effective_context_window_percent, 92);
+  const sol56 = catalog.models.find(
+    (row) => row.slug === "codexgpt-bridge/gpt-5.6-sol",
+  )!;
+  const instant56 = catalog.models.find(
+    (row) => row.slug === "codexgpt-bridge/gpt-5.6-sol-instant",
+  )!;
+  assert.equal(sol56.visibility, "list");
+  assert.equal(sol56.context_window, 240_000);
+  assert.equal(sol56.auto_compact_token_limit, 220_000);
+  assert.equal(instant56.visibility, "list");
+  assert.equal(instant56.context_window, 111_193);
+  assert.equal(instant56.auto_compact_token_limit, 95_000);
 });
 
 it("enforces the inclusive single-message token boundary and counts image reserves before Send", () => {
@@ -311,6 +389,71 @@ it("attaches the resolved account budget to the actual Full browser execution re
     });
     assert.equal(response.status, 200);
     assert.match(await response.text(), /Full reply/u);
+  } finally {
+    await gateway.close();
+  }
+});
+
+it("preserves synchronized browser context limits as client errors in JSON and SSE", async () => {
+  const { FullTurnBroker } = await import("./full-turn-broker.js");
+  const gateway = new ResponsesGateway({
+    port: 0,
+    accountContextProfile: () => "pro",
+    fullMcp: {
+      broker: new FullTurnBroker(),
+      enabled: () => true,
+      connectorName: () => "Bridge",
+    },
+    runWebTurn: async () => {
+      throw Object.assign(
+        new Error(
+          "Synchronized context exceeds its limit. No prompt was submitted.",
+        ),
+        {
+          code: "bridge_context_limit_exceeded",
+        },
+      );
+    },
+  });
+  try {
+    const address = await gateway.start();
+    for (const stream of [false, true]) {
+      const response = await fetch(`${address.baseUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "codexgpt-bridge/high",
+          input: "Test synchronized preflight",
+          stream,
+          metadata: {
+            thread_id: `context-limit-${stream}`,
+            turn_id: `context-limit-${stream}`,
+          },
+        }),
+      });
+      let failure: { type: string; code: string; message: string };
+      if (stream) {
+        assert.equal(response.status, 200);
+        const events = (await response.text())
+          .split(/\r?\n/)
+          .filter(
+            (line) => line.startsWith("data: ") && !line.includes("[DONE]"),
+          )
+          .map((line) => JSON.parse(line.slice(6)));
+        const failed = events.find((event) => event.type === "response.failed");
+        assert.ok(failed, JSON.stringify(events));
+        failure = failed.response.error;
+      } else {
+        assert.equal(response.status, 400);
+        failure = ((await response.json()) as { error: typeof failure }).error;
+      }
+      assert.equal(failure.code, "bridge_context_limit_exceeded");
+      assert.equal(failure.type, "invalid_request_error");
+      assert.match(failure.message, /No prompt was submitted/);
+    }
   } finally {
     await gateway.close();
   }

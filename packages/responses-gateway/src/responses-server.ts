@@ -1,5 +1,9 @@
 import { BridgeTextStream, BridgeStreamError } from "./text-stream.js";
 import {
+  publicCommentaryOutputId,
+  type BridgePublicCommentary,
+} from "./public-commentary.js";
+import {
   bridgeProgressDisplayStage,
   bridgeProgressText,
   isBridgeProgressMessage,
@@ -98,6 +102,7 @@ export interface BridgeWebModelRoute {
   readonly supportedEfforts?: readonly BridgeNativeEffort[];
   readonly nativeFamily?: BridgeNativeModelFamily;
   readonly contextMultiplier?: 3;
+  readonly stagedContext?: true;
 }
 
 export const BRIDGE_CONTEXT_WINDOW = 95_000;
@@ -106,6 +111,7 @@ export const BRIDGE_HARD_INPUT_TOKEN_LIMIT = 95_000;
 export const BRIDGE_CONTEXT_BUDGET_PROFILE = "bridge-safe-v1";
 
 export interface BridgeContextBudget {
+  readonly stagedContext?: true;
   readonly contextWindow: number;
   readonly autoCompactTokenLimit: number;
   readonly hardInputTokenLimit: number;
@@ -192,6 +198,7 @@ export interface BridgeExecutionPreflight {
     "within-limit" | "compaction-recommended" | "compaction-bypass";
   readonly budgetProfile: string;
   readonly contextMultiplier?: 3;
+  readonly stagedContext?: true;
   readonly multipart?: {
     readonly transactionId: string;
     readonly part: number;
@@ -289,6 +296,7 @@ export interface RunWebTurnInput {
   readonly onSnapshot?: (text: string) => void;
   /** Raw, current-message network text; mutable DOM snapshots must not use this. */
   readonly onStreamSnapshot?: (text: string) => void;
+  readonly onCommentary?: (commentary: BridgePublicCommentary) => void;
   readonly onProgress?: (stage: BridgeProgressStage) => void;
   readonly images: readonly CompiledResponsesImage[];
   readonly signal: AbortSignal;
@@ -744,9 +752,20 @@ function appendBridgeProgress(
   const seen = (state.progressStages ??= new Set());
   if (seen.has(stage)) return;
   seen.add(stage);
-  const items = (state.progressItems ??= []);
-  const index = items.length;
   const itemId = `${state.messageId}_bridge_${stage}`;
+  appendCommentaryItem(write, state, itemId, text);
+}
+
+function appendCommentaryItem(
+  write: ResponseEventWriter,
+  state: ResponseStreamState,
+  itemId: string,
+  text: string,
+): void {
+  if (state.textStarted) return;
+  const items = (state.progressItems ??= []);
+  if (items.some((item) => item.id === itemId)) return;
+  const index = items.length;
   const part = { type: "output_text", annotations: [], text };
   const item = {
     id: itemId,
@@ -1137,6 +1156,7 @@ function bridgeExecutionPreflight(
     ...(route.contextMultiplier
       ? { contextMultiplier: route.contextMultiplier }
       : {}),
+    ...(budget.stagedContext ? { stagedContext: true } : {}),
   };
 }
 
@@ -1284,6 +1304,7 @@ async function runBridgeWebTurn(
   onDelta?: (delta: string) => void,
   onProgress?: (stage: BridgeProgressStage) => void,
   onInputTokens?: (tokens: number) => void,
+  onCommentary?: (commentary: BridgePublicCommentary) => void,
 ): Promise<BridgeWebTurnResult> {
   const canonicalSource = compiled;
   const rollingLuna = route.slug === "codexgpt-bridge/luna-native";
@@ -1513,6 +1534,7 @@ async function runBridgeWebTurn(
       acquireToolLease: () => lifecycle.acquireToolTurn(),
       ...(onDelta ? { onDelta } : {}),
       onProgress: reportProgress,
+      ...(onCommentary ? { onCommentary } : {}),
       onUsageContract: (contract) =>
         onInputTokens?.(
           estimateCompiledInputTokens(compiled, { ...prepared, contract }),
@@ -1934,7 +1956,11 @@ function providerFailure(error: unknown): {
       /^Unsupported Responses text format:/.test(error.message) ||
       error.message === "Invalid or unsupported Responses output schema.");
   const invalidStructuredOutput = error instanceof BridgeStructuredOutputError;
-  const contextLimit = error instanceof BridgeContextLimitError;
+  const contextLimit =
+    error instanceof BridgeContextLimitError ||
+    (error instanceof Error &&
+      "code" in error &&
+      error.code === "bridge_context_limit_exceeded");
   return {
     type: limited
       ? "rate_limit_error"
@@ -2795,7 +2821,11 @@ export class ResponsesGateway {
             lifecycleLease = this.#lifecycle.acquireHttpTurn();
           } catch (error) {
             if (error instanceof ProviderDrainingError) {
-              this.#sendWebSocketError(webSocket, error.code, error.message);
+              this.#sendWebSocketError(webSocket, error.code, error.message, {
+                status: 503,
+                type: "server_error",
+                retryAfterSeconds: 5,
+              });
               return;
             }
             throw error;
@@ -2851,6 +2881,13 @@ export class ResponsesGateway {
                 (tokens) => {
                   state.inputTokens = tokens;
                 },
+                (entry) =>
+                  appendCommentaryItem(
+                    rawWrite,
+                    state,
+                    publicCommentaryOutputId(compiled.turnId!, entry.messageId),
+                    entry.text,
+                  ),
               );
               this.#remember(parsed, state, result);
               if (
@@ -2878,11 +2915,19 @@ export class ResponsesGateway {
           }
         })
         .catch((error: unknown) => {
-          this.#sendWebSocketError(
-            webSocket,
-            "codexgpt_bridge_provider_error",
-            error instanceof Error ? error.message : "Provider request failed.",
-          );
+          const failure = providerFailure(error);
+          this.#sendWebSocketError(webSocket, failure.code, failure.message, {
+            status:
+              failure.retry_after_seconds !== undefined
+                ? 429
+                : failure.type === "invalid_request_error"
+                  ? 400
+                  : 500,
+            type: failure.type,
+            ...(failure.retry_after_seconds === undefined
+              ? {}
+              : { retryAfterSeconds: failure.retry_after_seconds }),
+          });
         });
     });
     webSocket.once("close", () => {
@@ -2896,14 +2941,28 @@ export class ResponsesGateway {
     webSocket: WebSocket,
     code: string,
     message: string,
+    options: {
+      readonly status?: number;
+      readonly type?: string;
+      readonly retryAfterSeconds?: number;
+    } = {},
   ): void {
     if (webSocket.readyState !== WebSocket.OPEN) return;
     webSocket.send(
       JSON.stringify({
         type: "error",
-        code,
-        message,
-        param: null,
+        // Codex maps pre-response WebSocket errors through an HTTP status and
+        // a nested error. A flat event is ignored until the stream idle timeout.
+        status: options.status ?? 400,
+        error: {
+          type: options.type ?? "invalid_request_error",
+          code,
+          message,
+          param: null,
+        },
+        ...(options.retryAfterSeconds === undefined
+          ? {}
+          : { headers: { "retry-after": String(options.retryAfterSeconds) } }),
         sequence_number: 0,
       }),
     );
@@ -3246,6 +3305,13 @@ export class ResponsesGateway {
                 (tokens) => {
                   stream.state.inputTokens = tokens;
                 },
+                (entry) =>
+                  appendCommentaryItem(
+                    rawWrite,
+                    stream.state,
+                    publicCommentaryOutputId(compiled.turnId!, entry.messageId),
+                    entry.text,
+                  ),
               );
               this.#remember(parsed, stream.state, result);
               if (abortController.signal.aborted || response.destroyed) return;

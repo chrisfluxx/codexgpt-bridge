@@ -1,5 +1,6 @@
 import type { ChatGptDomNode } from "./chatgpt-markdown.js";
 import type { ChatGptGenerationWatch } from "./chatgpt-generation.js";
+import type { BridgePublicCommentary } from "@codexgpt-bridge/responses-gateway";
 
 export interface ChatGptBusySource {
   readonly kind: "stop-control" | "aria-busy" | "streaming-surface";
@@ -31,6 +32,7 @@ export interface ChatGptBrowserObservation {
   readonly busySources: readonly ChatGptBusySource[];
   readonly assistantMessageId: string;
   readonly generationState: string;
+  readonly publicCommentary?: readonly BridgePublicCommentary[];
   readonly streamSignal?: {
     readonly messageId: string;
     readonly text: string;
@@ -644,6 +646,22 @@ export function observeChatGpt(
     window as unknown as { __cgbGenerationWatch?: ChatGptGenerationWatch }
   ).__cgbGenerationWatch?.active;
   const latestGenerationMessage = generation?.messages.at(-1);
+  // Only the stream owned by this submission can supply commentary. Analysis,
+  // tool recipients and unfinished snapshots never leave the browser.
+  const publicCommentary =
+    generation?.state === "observing"
+      ? generation.messages
+          .filter(
+            (message) =>
+              message.role === "assistant" &&
+              message.recipient === "all" &&
+              message.channel === "commentary" &&
+              message.status === "finished_successfully" &&
+              message.text.trim() &&
+              message.text.length <= 16_000,
+          )
+          .map((message) => ({ messageId: message.id, text: message.text }))
+      : [];
   const terminal =
     generation?.state === "observing" &&
     assistantMessageId &&
@@ -651,9 +669,24 @@ export function observeChatGpt(
     latestGenerationMessage.finishedAt !== null
       ? latestGenerationMessage
       : undefined;
-  const composer = document.querySelector(
-    '#prompt-textarea, textarea[data-testid="prompt-textarea"], [contenteditable="true"][data-testid*="prompt"], main [contenteditable="true"]',
+  const composerCandidates = [
+    ...document.querySelectorAll(
+      '#prompt-textarea, textarea[data-testid="prompt-textarea"], [contenteditable="true"][data-testid*="prompt"], main [contenteditable="true"]',
+    ),
+  ].filter(
+    (element) =>
+      visible(element) &&
+      !element.closest(
+        '[inert], [aria-hidden="true"], aside, nav, [data-message-author-role], [data-user-message-bubble], pre, code, [role="menu"], [role="dialog"]',
+      ),
   );
+  const composerRoots = composerCandidates.filter(
+    (element) =>
+      !composerCandidates.some(
+        (other) => other !== element && other.contains(element),
+      ),
+  );
+  const composer = composerRoots.length === 1 ? composerRoots[0] : undefined;
   const alerts = [...document.querySelectorAll('[role="alert"]')]
     .filter(visible)
     .filter((entry) => {
@@ -710,6 +743,7 @@ export function observeChatGpt(
     busySources: busySources.slice(0, 32),
     assistantMessageId,
     generationState: generation?.state ?? "unavailable",
+    ...(publicCommentary.length ? { publicCommentary } : {}),
     streamSignal:
       generation?.state === "observing" &&
       assistantMessageId &&

@@ -32,7 +32,7 @@ const native = {
 };
 const catalog = { models: [native] };
 
-it("lists four proven models while retaining hidden legacy and experimental IDs across refresh", () => {
+it("lists six proven models while retaining hidden legacy and experimental IDs across refresh", () => {
   const modes: BridgeWebMode[] = [
     "instant",
     "medium",
@@ -52,7 +52,7 @@ it("lists four proven models while retaining hidden legacy and experimental IDs 
     const rows = (payload as typeof first).models.filter((row) =>
       String(row.slug).startsWith("codexgpt-bridge/"),
     );
-    assert.equal(rows.length, 13);
+    assert.equal(rows.length, 15);
     assert.deepEqual(
       rows
         .filter((row) => row.visibility === "list")
@@ -60,9 +60,11 @@ it("lists four proven models while retaining hidden legacy and experimental IDs 
         .sort(),
       [
         "codexgpt-bridge/gpt-5.6-sol",
+        "codexgpt-bridge/gpt-5.6-sol-instant",
         "codexgpt-bridge/gpt-5.6-sol-pro",
         "codexgpt-bridge/gpt-6-pro",
         "codexgpt-bridge/gpt-6-sol",
+        "codexgpt-bridge/gpt-6-sol-instant",
       ],
     );
     assert.equal(
@@ -158,16 +160,19 @@ it("exposes separately verified GPT-5.6 and GPT-6 Sol routes with equal-budget e
   assert.deepEqual(
     pro.find((row) => row.slug === "codexgpt-bridge/gpt-5.6-sol")
       ?.supportedEfforts,
-    ["low", "medium", "high", "xhigh"],
+    ["medium", "high", "xhigh"],
   );
   assert.deepEqual(
     pro.find((row) => row.slug === "codexgpt-bridge/gpt-6-sol")
       ?.supportedEfforts,
-    ["low", "medium", "high", "xhigh"],
+    ["medium", "high", "xhigh"],
   );
-  assert.equal(
-    pro.some((row) => row.slug.endsWith("-instant")),
-    false,
+  assert.deepEqual(
+    pro.filter((row) => row.slug.endsWith("-instant")).map((row) => row.slug),
+    [
+      "codexgpt-bridge/gpt-6-sol-instant",
+      "codexgpt-bridge/gpt-5.6-sol-instant",
+    ],
   );
   assert.equal(
     pro.filter((row) => row.mode === "pro" && !row.contextMultiplier).length,
@@ -214,7 +219,7 @@ it("preserves native rows and compiled instructions through owned native/Web-onl
     (sol6.supported_reasoning_levels as Array<{ effort: string }>).map(
       (row) => row.effort,
     ),
-    ["low", "medium", "high", "xhigh"],
+    ["medium", "high", "xhigh"],
   );
   assert.equal(pro.default_reasoning_level, "max");
   assert.equal(pro.tool_mode, null);
@@ -278,6 +283,22 @@ it("routes native Responses effort to the Full browser and rejects unavailable m
     runWebTurn: async (input) => {
       assert.equal(input.execution?.toolTransport, "full");
       assert.equal(input.allowWebNativeTools, true);
+      if (
+        (input.modelFamily === "bridge-native:5.6" ||
+          input.modelFamily === "bridge-native:6") &&
+        input.mode !== "pro"
+      ) {
+        const instant = input.mode === "instant";
+        assert.equal(
+          input.execution.contextWindow,
+          instant ? 111_193 : 240_000,
+        );
+        assert.equal(
+          input.execution.autoCompactTokenLimit,
+          instant ? 95_000 : 220_000,
+        );
+        assert.equal(input.execution.stagedContext, instant ? undefined : true);
+      }
       sent.push({ mode: input.mode, family: input.modelFamily });
       return "Native Full reply";
     },
@@ -308,7 +329,9 @@ it("routes native Responses effort to the Full browser and rejects unavailable m
       ["xhigh", "extra-high"],
     ]) {
       const response = await post(
-        "codexgpt-bridge/gpt-5.6-sol",
+        effort === "low"
+          ? "codexgpt-bridge/gpt-5.6-sol-instant"
+          : "codexgpt-bridge/gpt-5.6-sol",
         effort,
         effort!,
       );
@@ -322,7 +345,9 @@ it("routes native Responses effort to the Full browser and rejects unavailable m
       ["xhigh", "extra-high"],
     ]) {
       const response = await post(
-        "codexgpt-bridge/gpt-6-sol",
+        effort === "low"
+          ? "codexgpt-bridge/gpt-6-sol-instant"
+          : "codexgpt-bridge/gpt-6-sol",
         effort,
         `six-${effort}`,
       );
@@ -350,6 +375,20 @@ it("routes native Responses effort to the Full browser and rejects unavailable m
         effort,
         `bad-${effort}`,
       );
+      assert.equal(invalid.status, 400);
+      assert.equal(
+        ((await invalid.json()) as { error: { code: string } }).error.code,
+        "bridge_reasoning_effort_unavailable",
+      );
+    }
+    assert.equal(sent.length, 10);
+    for (const [model, effort] of [
+      ["codexgpt-bridge/gpt-5.6-sol", "low"],
+      ["codexgpt-bridge/gpt-5.6-sol-instant", "high"],
+      ["codexgpt-bridge/gpt-6-sol", "low"],
+      ["codexgpt-bridge/gpt-6-sol-instant", "high"],
+    ]) {
+      const invalid = await post(model!, effort, `wrong-route-${model}`);
       assert.equal(invalid.status, 400);
       assert.equal(
         ((await invalid.json()) as { error: { code: string } }).error.code,

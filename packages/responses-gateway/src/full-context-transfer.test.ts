@@ -132,7 +132,7 @@ it("fails before any send for too many parts, oversized final contract, images o
         ...limits,
         transactionTokens: 100,
       }),
-    /3× context budget/,
+    /context budget/,
   );
 });
 

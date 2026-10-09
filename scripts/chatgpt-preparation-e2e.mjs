@@ -23,8 +23,9 @@ function fixture({
   unrelatedControl = false,
   hiddenPicker = false,
   ignoreFirstClick = false,
+  hiddenComposer = false,
 } = {}) {
-  return `<!doctype html><main>
+  return `<!doctype html>${hiddenComposer ? '<textarea id="prompt-textarea" style="display:none">decoy</textarea>' : ""}<main>
     ${unrelatedControl ? '<button type="button" data-tone="neutral" aria-haspopup="menu" onclick="window.unrelatedClicks++">Attachments</button>' : ""}
     ${hiddenPicker ? '<button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" style="display:none">High</button>' : ""}
     <form onsubmit="return false">
@@ -33,9 +34,9 @@ function fixture({
     <button type="button" data-testid="send-button">Send</button>
     </form><div id="messages"></div></main><script>
     const picker = document.querySelector('[data-fixture-picker]');
-    const composer = document.querySelector('#prompt-textarea');
+    const composer = document.querySelector('form #prompt-textarea');
     let selected = ${JSON.stringify(initial)}, prepared = false, pending;
-    window.sends = 0; window.menuOpens = 0; window.configureOpens = 0; window.selectedAtSend = []; window.unrelatedClicks = 0;
+    window.sends = 0; window.menuOpens = 0; window.configureOpens = 0; window.selectedAtSend = []; window.unrelatedClicks = 0; window.inputTrusted = []; window.sentTexts = [];
     picker.onclick = () => {
       const old = document.querySelector('[role="menu"]');
       if (old) { old.remove(); return; }
@@ -72,7 +73,8 @@ function fixture({
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') { clearTimeout(pending); document.querySelector('[role="menu"]')?.remove(); document.querySelector('[role="dialog"]')?.remove(); picker.setAttribute('aria-expanded', 'false'); }
     });
-    composer.addEventListener('input', () => {
+    composer.addEventListener('input', event => {
+      window.inputTrusted.push(event.isTrusted);
       prepared = true;
       if (${drift}) selected = picker.textContent = 'Medium';
       if (${missing}) picker.remove();
@@ -80,6 +82,7 @@ function fixture({
     });
     document.querySelector('[data-testid="send-button"]').onclick = () => {
       window.sends++; window.selectedAtSend.push(selected);
+      window.sentTexts.push(composer.textContent);
       const user = document.createElement('div'); user.setAttribute('data-message-author-role','user'); user.textContent = composer.textContent; composer.textContent = '';
       const reply = document.createElement('div'); reply.setAttribute('data-testid','conversation-turn-' + window.sends);
       reply.innerHTML = '<div data-message-author-role="assistant">OK ' + window.sends + '</div><button data-testid="copy-turn-button">Copy</button>';
@@ -371,6 +374,7 @@ try {
       false,
     ],
     ["generic-composer-control", { generic: true }, 2, false],
+    ["hidden-composer-native-input", { hiddenComposer: true }, 2, false],
     ["delayed-configure", { configure: true, verifyDelay: 650 }, 1, false],
     ["post-input-drift", { drift: true }, 1, true],
     ["missing-verification-menu", { missing: true }, 1, true],
@@ -421,7 +425,7 @@ try {
         );
         const state = window
           ? await window.webContents.executeJavaScript(
-              "({sends:window.sends,menuOpens:window.menuOpens,configureOpens:window.configureOpens,selectedAtSend:window.selectedAtSend,unrelatedClicks:window.unrelatedClicks})",
+              "({sends:window.sends,menuOpens:window.menuOpens,configureOpens:window.configureOpens,selectedAtSend:window.selectedAtSend,unrelatedClicks:window.unrelatedClicks,inputTrusted:window.inputTrusted,sentTexts:window.sentTexts,decoyValue:document.querySelector('textarea[style]')?.value})",
             )
           : {};
         await controller.close();
@@ -435,6 +439,15 @@ try {
       },
     );
     results.push(result);
+    if (name === "hidden-composer-native-input") {
+      assert.equal(result.decoyValue, "decoy");
+      assert.ok(result.inputTrusted.length >= count);
+      assert.ok(result.inputTrusted.every((trusted) => trusted === true));
+      assert.deepEqual(
+        result.sentTexts,
+        Array(count).fill("private-fixture-input"),
+      );
+    }
     process.stdout.write(
       JSON.stringify({
         name,
@@ -457,13 +470,17 @@ try {
       assert.equal(result.sends, count);
       assert.deepEqual(result.selectedAtSend, Array(count).fill("High"));
       assert.equal(result.traces.length, count);
-      // Wide scheduling allowance; this measures pre-submit only, not inference.
-      for (const trace of result.traces)
+      // Exclude Electron window startup from the pre-submit time budget.
+      for (const trace of result.traces) {
+        const windowWaitMs =
+          trace.preparationSteps.find((step) => step.stage === "window-ready")
+            ?.elapsedMs ?? 0;
         assert.ok(
-          trace.milestones.submitting <
+          trace.milestones.submitting - windowWaitMs <
             (settings.menuDelay > 3_000 ? 7_000 : 5_000),
           JSON.stringify(trace),
         );
+      }
       assert.equal(result.configureOpens, settings.configure ? count * 2 : 0);
       assert.equal(
         result.menuOpens,

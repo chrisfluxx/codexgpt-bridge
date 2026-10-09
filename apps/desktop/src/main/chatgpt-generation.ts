@@ -18,11 +18,15 @@ export interface ChatGptGenerationWatch {
     state: string;
     messages: ChatGptGenerationMessage[];
     cancel: Set<() => void>;
+    timeoutMs: number;
   } | null;
 }
 
 /** Inject before submission. Observes a clone, without replacing the page's response body. */
-export function watchChatGptGeneration(submissionId: string | null): void {
+export function watchChatGptGeneration(
+  submissionId: string | null,
+  timeoutMs = 15 * 60_000,
+): void {
   const host = window as unknown as {
     __cgbGenerationWatch?: ChatGptGenerationWatch;
   };
@@ -78,7 +82,7 @@ export function watchChatGptGeneration(submissionId: string | null): void {
           void reader.cancel().catch(() => undefined);
         };
         active.cancel.add(cancel);
-        const timer = setTimeout(cancel, 15 * 60_000);
+        const timer = setTimeout(cancel, active.timeoutMs);
         void (async () => {
           const decoder = new TextDecoder();
           let pending = "";
@@ -291,6 +295,7 @@ export function watchChatGptGeneration(submissionId: string | null): void {
           state: "awaiting-stream",
           messages: [],
           cancel: new Set(),
+          timeoutMs,
         };
 }
 

@@ -38,6 +38,13 @@ previously managed by Bridge.
 The interface supports English, Traditional Chinese, Simplified Chinese,
 Japanese and Korean. Use the **Language** menu to switch.
 
+With Full MCP and a Pro account, GPT-5.6 Sol and GPT-6 Sol Medium, High and Extra High use a
+240,000-token context window and compact at about 220,000 tokens. Large initial
+payloads are staged with exact acknowledgements while each browser message keeps
+its existing limit. Each model's Instant is a separate option with a 111,193-token
+context window and compaction at about 95,000 tokens. Public model commentary appears during long Full tasks and is retained
+across reconnects without repeating commentary already delivered to Codex.
+
 ## ChatGPT plugin setup
 
 Full MCP uses a custom ChatGPT MCP plugin, also called an App or connector in

@@ -7,6 +7,7 @@ import {
 import { observeChatGpt } from "../apps/desktop/dist/main/chatgpt-observation.js";
 import { chatGptDomToMarkdown } from "../apps/desktop/dist/main/chatgpt-markdown.js";
 import { ChatGptCompletionTracker } from "../apps/desktop/dist/main/chatgpt-completion.js";
+import { BRIDGE_FULL_TURN_TIMEOUT_MS } from "../packages/responses-gateway/dist/full-turn-limits.js";
 
 export async function runGenerationChecks(page) {
   await page.route("https://completion.test/**", (route) =>
@@ -32,9 +33,9 @@ export async function runGenerationChecks(page) {
       return response;
     };
   });
-  const start = async (id) => {
+  const start = async (id, timeoutMs = 15 * 60_000) => {
     await page.evaluate(
-      `(${watchChatGptGeneration.toString()})(${JSON.stringify(id)})`,
+      `(${watchChatGptGeneration.toString()})(${JSON.stringify(id)}, ${timeoutMs})`,
     );
     await page.evaluate(() => {
       void globalThis
@@ -261,7 +262,36 @@ export async function runGenerationChecks(page) {
     "answer-terminal-abort",
   );
   await page.evaluate(`(${watchChatGptGeneration.toString()})(null)`);
+  await page.clock.install();
+  await start("submission-public-commentary", BRIDGE_FULL_TURN_TIMEOUT_MS);
+  await page.clock.fastForward(16 * 60_000);
+  const progress = (id, text, overrides = {}) => ({
+    message: {
+      ...message(id, text, "finished_successfully", false).message,
+      channel: "commentary",
+      ...overrides,
+    },
+  });
+  await send([
+    progress("private-analysis", "Private reasoning", { channel: "analysis" }),
+    progress("unfinished-progress", "Still writing", { status: "in_progress" }),
+    progress("tool-progress", "Tool payload", { recipient: "python" }),
+    progress("public-progress", "Checking the selected files."),
+  ]);
+  await page.waitForFunction(() =>
+    globalThis.__cgbGenerationWatch.active.messages.some(
+      (row) => row.id === "public-progress",
+    ),
+  );
+  assert.deepEqual((await observe()).publicCommentary, [
+    { messageId: "public-progress", text: "Checking the selected files." },
+  ]);
+  assert.equal((await observe()).terminalSignal, null);
+  assert.equal((await observe()).responseBusy, true);
+  await page.evaluate(`(${watchChatGptGeneration.toString()})(null)`);
+  await page.evaluate(() => globalThis.__streams.at(-1).close());
+  assert.equal((await observe()).publicCommentary, undefined);
   process.stdout.write(
-    "Generation evidence checks passed: exact message/body binding, midstream pauses, stale stop, patches, new submission, terminal abort, original stream preservation.\n",
+    "Generation evidence checks passed: exact message/body binding, midstream pauses, stale stop, patches, new submission, terminal abort, public commentary after 15 minutes, original stream preservation.\n",
   );
 }

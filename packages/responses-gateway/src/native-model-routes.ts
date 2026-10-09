@@ -1,6 +1,6 @@
 import type { BridgeWebMode, BridgeWebModelRoute } from "./responses-server.js";
 import type { BridgeAccountContextProfile } from "./context-budgets.js";
-import { resolveBridgeContextBudget } from "./context-budgets.js";
+import { resolveBridgeRouteContextBudget } from "./context-budgets.js";
 
 export type BridgeNativeModelFamily = "5.6" | "6" | "6.1";
 export type BridgeNativeEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -150,12 +150,30 @@ export function availableNativeModelRoutes(
       return [];
     if (route.nativeFamily && !families.includes(route.nativeFamily)) return [];
     if (route.mode === "pro" && profile !== "pro") return [];
-    if (/-instant(?:-3x)?$/.test(route.slug) && profile === "pro") return [];
-    const defaultBudget = resolveBridgeContextBudget(route.mode, profile);
+    if (
+      /-instant(?:-3x)?$/.test(route.slug) &&
+      profile === "pro" &&
+      (enabled !== true ||
+        (route.nativeFamily !== "6" && route.nativeFamily !== "5.6") ||
+        route.contextMultiplier)
+    )
+      return [];
+    const candidate: BridgeWebModelRoute = {
+      ...route,
+      ...(enabled === true &&
+      profile === "pro" &&
+      (route.nativeFamily === "6" || route.nativeFamily === "5.6")
+        ? { stagedContext: true }
+        : {}),
+    };
+    const defaultBudget = resolveBridgeRouteContextBudget(candidate, profile);
     const efforts = route.supportedEfforts!.filter((effort) => {
       const mode = nativeRouteMode(route, effort);
       if (available && !available.has(mode)) return false;
-      const budget = resolveBridgeContextBudget(mode, profile);
+      const budget = resolveBridgeRouteContextBudget(
+        { ...candidate, mode },
+        profile,
+      );
       return (
         budget.contextWindow === defaultBudget.contextWindow &&
         budget.hardInputTokenLimit === defaultBudget.hardInputTokenLimit &&
@@ -169,7 +187,7 @@ export function availableNativeModelRoutes(
         : efforts[0]!;
     return [
       {
-        ...route,
+        ...candidate,
         effort,
         mode: nativeRouteMode(route, effort),
         supportedEfforts: efforts,

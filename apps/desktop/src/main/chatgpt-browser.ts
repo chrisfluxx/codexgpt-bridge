@@ -36,6 +36,7 @@ import {
   type BridgeGeneratedImage,
   type BridgeGeneratedImagesResult,
   type BridgeProgressStage,
+  type BridgePublicCommentary,
   type BridgeWebMode,
   type BridgeNativeModelFamily,
   type RunWebTurnInput,
@@ -412,6 +413,7 @@ class ChatGptBrowserSession {
         assistantToken: string;
         documentToken: string;
         streamConfirmed: boolean;
+        connectorName?: string;
       })
     | undefined;
   #recoverableToolFailure: ChatGptRecoverableToolFailure | undefined;
@@ -424,6 +426,8 @@ class ChatGptBrowserSession {
       streamListeners: Set<(text: string) => void>;
       progress: BridgeProgressStage[];
       progressListeners: Set<(stage: BridgeProgressStage) => void>;
+      commentary: BridgePublicCommentary[];
+      commentaryListeners: Set<(commentary: BridgePublicCommentary) => void>;
     }
   >();
   state:
@@ -997,6 +1001,8 @@ class ChatGptBrowserSession {
         streamListeners: new Set(),
         progress: [],
         progressListeners: new Set(),
+        commentary: [],
+        commentaryListeners: new Set(),
       };
       this.snapshots.set(key, snapshot);
       if (this.snapshots.size > 100) {
@@ -1005,7 +1011,8 @@ class ChatGptBrowserSession {
             old !== key &&
             !entry.listeners.size &&
             !entry.streamListeners.size &&
-            !entry.progressListeners.size
+            !entry.progressListeners.size &&
+            !entry.commentaryListeners.size
           ) {
             this.snapshots.delete(old);
             break;
@@ -1022,6 +1029,7 @@ class ChatGptBrowserSession {
     if (input.onProgress) {
       output.progressListeners.add(input.onProgress);
     }
+    if (input.onCommentary) output.commentaryListeners.add(input.onCommentary);
     const reportProgress = (stage: BridgeProgressStage): void => {
       this.stage = stage;
       if (output.progress.includes(stage)) return;
@@ -1033,6 +1041,7 @@ class ChatGptBrowserSession {
       for (const stage of output.progress) input.onProgress?.(stage);
       if (output.text) input.onSnapshot?.(output.text);
       if (output.streamText) input.onStreamSnapshot?.(output.streamText);
+      for (const entry of output.commentary) input.onCommentary?.(entry);
       return await this.#turnRunner.run(
         key,
         AbortSignal.any([input.signal, this.#taskCancellation.signal]),
@@ -1082,6 +1091,17 @@ class ChatGptBrowserSession {
                   onSnapshot: (text) => {
                     output.text = text;
                     for (const listener of output.listeners) listener(text);
+                  },
+                  onCommentary: (entry) => {
+                    if (
+                      output.commentary.some(
+                        (item) => item.messageId === entry.messageId,
+                      )
+                    )
+                      return;
+                    output.commentary.push(entry);
+                    for (const listener of output.commentaryListeners)
+                      listener(entry);
                   },
                   ...(input.onStreamSnapshot
                     ? {
@@ -1267,6 +1287,8 @@ class ChatGptBrowserSession {
       if (input.onStreamSnapshot)
         output.streamListeners.delete(input.onStreamSnapshot);
       if (input.onProgress) output.progressListeners.delete(input.onProgress);
+      if (input.onCommentary)
+        output.commentaryListeners.delete(input.onCommentary);
     }
   }
 
@@ -1760,7 +1782,12 @@ class ChatGptBrowserSession {
     input.onProgress?.("preparing");
     if (
       input.prompt.length >
-      (input.execution?.contextMultiplier === 3 ? 24 : 4) * 1024 * 1024
+      (input.execution?.stagedContext ||
+      input.execution?.contextMultiplier === 3
+        ? 24
+        : 4) *
+        1024 *
+        1024
     ) {
       throw new Error(
         "ChatGPT Web prompt exceeds the 4 MiB browser-provider limit.",
@@ -2077,7 +2104,12 @@ class ChatGptBrowserSession {
     let prompt = buildPrompt();
     if (
       prompt.length >
-      (input.execution?.contextMultiplier === 3 ? 24 : 4) * 1024 * 1024
+      (input.execution?.stagedContext ||
+      input.execution?.contextMultiplier === 3
+        ? 24
+        : 4) *
+        1024 *
+        1024
     )
       throw new Error(
         "Synchronized Codex context exceeds the 4 MiB browser limit; compact the task first.",
@@ -2098,7 +2130,7 @@ class ChatGptBrowserSession {
       let problem = bridgeExecutionLimitProblem(execution);
       if (
         problem &&
-        execution.contextMultiplier === 3 &&
+        (execution.stagedContext || execution.contextMultiplier === 3) &&
         execution.toolTransport === "full" &&
         !input.requireRetainedConversation
       ) {
@@ -2109,7 +2141,7 @@ class ChatGptBrowserSession {
           execution.browserMessageTokenLimit === undefined
         )
           throw new SynchronizedContextLimitError(
-            "The Full context transaction cannot fit its owned 3× budget. No prompt was submitted.",
+            "The Full context transaction cannot fit its owned context budget. No prompt was submitted.",
           );
         const source = sync
           ? [sync.transportText, "[Current request]", input.prompt]
@@ -2534,6 +2566,9 @@ class ChatGptBrowserSession {
           input.onProgress?.("receiving");
           input.onSnapshot?.(observation.text);
         }
+        if (input.allowWebNativeTools && !input.requireRetainedConversation)
+          for (const entry of observation.publicCommentary ?? [])
+            input.onCommentary?.(entry);
         if (
           input.onStreamSnapshot &&
           hasNewAssistant &&
@@ -2728,22 +2763,7 @@ class ChatGptBrowserSession {
               projectUrl,
             );
           this.#receipt = sync?.receipt;
-          if (
-            this.#temporaryChat &&
-            input.threadId &&
-            this.#verifiedTemporaryDocumentToken
-          )
-            this.#temporarySource = {
-              thread: input.threadId,
-              url: window.webContents.getURL(),
-              documentToken: this.#verifiedTemporaryDocumentToken,
-              userToken: observation.userToken,
-              assistantToken: observation.assistantToken,
-              assistantMessageId: observation.assistantMessageId,
-              requestCount: observation.generationRequestCount,
-              text: observation.text,
-              streamConfirmed: observation.terminalConfirmed,
-            };
+          await this.#rememberTemporarySource(window, input, observation);
           if (observation.terminalConfirmed) {
             const completionProof: ChatGptConfirmedCompletion = {
               userToken: observation.userToken,
@@ -2944,6 +2964,10 @@ class ChatGptBrowserSession {
               transfer.total,
               transfer.digest,
             );
+          // An ACK can replace the empty-page Temporary Chat controls before
+          // the next part. Retain its exact verified document and answer just
+          // as for a completed user turn, without committing canonical context.
+          await this.#rememberTemporarySource(window, input, observation);
           if (observation.terminalConfirmed)
             this.#confirmedCompletion = {
               userToken: observation.userToken,
@@ -2997,7 +3021,7 @@ class ChatGptBrowserSession {
     await this.#execute<void>(
       window,
       "watch-generation",
-      `(${watchChatGptGeneration.toString()})(${JSON.stringify(id)})`,
+      `(${watchChatGptGeneration.toString()})(${JSON.stringify(id)}, ${BRIDGE_FULL_TURN_TIMEOUT_MS})`,
     ).catch(() => undefined);
   }
 
@@ -3106,9 +3130,45 @@ class ChatGptBrowserSession {
     return images;
   }
 
-  async #isRetainedTemporarySource(
+  async #rememberTemporarySource(
     window: ChatGptWindow,
     input: RunWebTurnInput,
+    observation: Observation,
+  ): Promise<void> {
+    if (
+      !this.#temporaryChat ||
+      !input.threadId ||
+      !this.#verifiedTemporaryDocumentToken
+    )
+      return;
+    const temporary = await this.#observeTemporaryChat(window);
+    if (
+      temporary.documentToken !== this.#verifiedTemporaryDocumentToken ||
+      temporary.inactive ||
+      temporary.ambiguous
+    ) {
+      this.#temporarySource = undefined;
+      return;
+    }
+    this.#temporarySource = {
+      thread: input.threadId,
+      url: window.webContents.getURL(),
+      documentToken: temporary.documentToken,
+      userToken: observation.userToken,
+      assistantToken: observation.assistantToken,
+      assistantMessageId: observation.assistantMessageId,
+      requestCount: observation.generationRequestCount,
+      text: observation.text,
+      streamConfirmed: observation.terminalConfirmed,
+      ...(input.allowWebNativeTools && input.connectorName?.trim()
+        ? { connectorName: input.connectorName.trim() }
+        : {}),
+    };
+  }
+
+  async #isRetainedTemporarySource(
+    window: ChatGptWindow,
+    input: Pick<RunWebTurnInput, "threadId">,
   ): Promise<boolean> {
     const proof = this.#temporarySource;
     const reject = (reason: string): false => {
@@ -3139,9 +3199,16 @@ class ChatGptBrowserSession {
     // stream-confirmed stale Stop before permitting another submission.
     if (temporary.documentToken !== proof.documentToken)
       return reject("document-changed");
-    if (observation.userToken !== proof.userToken)
+    // The native App surface first renders fallback-turn-0 with no user bubble,
+    // then hydrates real turn groups when the composer is used again. Those DOM
+    // tokens are not durable identities. A previously stream-confirmed answer
+    // is still bound to this document, exact message, request count and body.
+    if (!proof.streamConfirmed && observation.userToken !== proof.userToken)
       return reject("user-changed");
-    if (observation.assistantToken !== proof.assistantToken)
+    if (
+      !proof.streamConfirmed &&
+      observation.assistantToken !== proof.assistantToken
+    )
       return reject("assistant-changed");
     if (observation.assistantMessageId !== proof.assistantMessageId)
       return reject("message-changed");
@@ -3170,20 +3237,32 @@ class ChatGptBrowserSession {
     if (!this.#temporaryChat) return;
     const deadline = Date.now() + 8_000;
     let unpersonalized = false;
-    const retained = await this.#isRetainedTemporarySource(window, input);
     do {
       input.signal.throwIfAborted();
+      const state = await this.#observeTemporaryChat(window);
+      const proof = this.#temporarySource;
+      const sameDocument =
+        proof?.thread === input.threadId &&
+        proof?.url === window.webContents.getURL() &&
+        proof?.documentToken === state.documentToken;
       const temporaryUrl = isTemporaryChatUrl(
         window.webContents.getURL(),
         this.#baseUrl,
       );
-      if (!temporaryUrl && !retained) break;
-      const state = await this.#observeTemporaryChat(window);
+      if (!temporaryUrl && !sameDocument) break;
+      const retained =
+        sameDocument && (await this.#isRetainedTemporarySource(window, input));
       const sameRetainedDocument =
         retained &&
         this.#temporarySource?.url === window.webContents.getURL() &&
         this.#temporarySource.documentToken === state.documentToken;
-      if (!temporaryUrl && !sameRetainedDocument) break;
+      if (state.inactive || state.ambiguous) break;
+      // Typing can briefly unmount the old answer. Wait only in this exact
+      // owned document, and require the complete source proof to return.
+      if (!temporaryUrl && !sameRetainedDocument) {
+        await delay(100, input.signal);
+        continue;
+      }
       // Completed Temporary Chats can omit the empty-page header toggle. Only
       // the exact document previously verified as temporary may inherit proof;
       // an explicit inactive or conflicting control always rejects submission.
@@ -3205,11 +3284,13 @@ class ChatGptBrowserSession {
       await delay(100, input.signal);
     } while (Date.now() < deadline);
     if (unpersonalized)
-      throw new Error(
+      throw new PreparationError(
         "Temporary Chat 目前為 Unpersonalized，無法使用 Full MCP App。請在 ChatGPT 自行選擇是否允許 Personalized，或停用暫時模式後建立新任務。尚未送出訊息；Bridge 不會自動更改個人化設定。",
+        "error",
       );
-    throw new Error(
+    throw new PreparationError(
       "無法驗證 Temporary Chat 已啟用，尚未送出訊息。請開啟 ChatGPT 檢查暫時聊天介面；不會改用一般對話。",
+      "error",
     );
   }
 
@@ -3328,6 +3409,7 @@ class ChatGptBrowserSession {
     connectorBoundToConversation = false,
   ): Promise<void> {
     input.signal.throwIfAborted();
+    await this.#ensureTemporaryChat(window, input);
     await this.#dismissChatGptMenus(window);
     let observed = await this.#readSelection(window);
     // A unique, visible and enabled composer control is direct effort evidence
@@ -4686,13 +4768,30 @@ class ChatGptBrowserSession {
     window: ChatGptWindow,
     connectorName: string,
   ): Promise<boolean> {
+    // ChatGPT may omit the original user/App pill from its native response
+    // surface. Reattaching that App remounts the conversation and picker. Reuse
+    // only our completed, verified App submission in the exact retained page;
+    // a reload, task switch, another response or changed App invalidates it.
+    const proof = this.#temporarySource;
+    if (
+      proof?.streamConfirmed &&
+      proof.connectorName === connectorName &&
+      proof.thread === this.#activeThread &&
+      (await this.#isRetainedTemporarySource(window, {
+        threadId: this.#activeThread,
+      }))
+    ) {
+      this.#preparationTrace?.event("connector-conversation-retained");
+      return true;
+    }
     return this.#execute<boolean>(
       window,
       "connector-conversation-binding",
       `(() => {
         const connectorName = ${JSON.stringify(connectorName)};
         const normalize = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();
-        const userMessages = [...document.querySelectorAll('[data-message-author-role="user"]')];
+        const userMessages = [...new Set(document.querySelectorAll('[data-message-author-role="user"], [data-user-message-bubble], [data-chatgpt-search-unit-key$=":user"], [data-content-search-unit-key$=":user"]'))]
+          .filter(element => !element.closest('#prompt-textarea, [contenteditable="true"], pre, code'));
         const exactPill = userMessages.some((message) =>
           [...message.querySelectorAll('[data-inline-selection-pill][data-keyword], a[href*="/plugins/"], [app-mention-name][app-mention-display-name][app-mention-path^="app://"]')]
             .some((element) =>
@@ -4986,29 +5085,44 @@ class ChatGptBrowserSession {
   }
 
   async #fillComposer(window: ChatGptWindow, prompt: string): Promise<void> {
-    const serialized = JSON.stringify(prompt);
-    const filled = await this.#execute<boolean>(
+    const focused = await this.#execute<boolean>(
       window,
-      "fill-composer",
+      "focus-composer-for-fill",
       `(() => {
-        const prompt = ${serialized};
-        const composer = document.querySelector('#prompt-textarea, textarea[data-testid="prompt-textarea"], [contenteditable="true"][data-testid*="prompt"], main [contenteditable="true"]');
-        if (!composer) return false;
-        composer.focus();
+        const candidates = [...document.querySelectorAll('#prompt-textarea, textarea[data-testid="prompt-textarea"], [contenteditable="true"][data-testid*="prompt"], main [contenteditable="true"]')].filter(element => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          const emptyEditable = element instanceof HTMLElement && element.isContentEditable && !(element.textContent ?? '').trim();
+          return element.isConnected && rect.width > 0 && (rect.height > 0 || emptyEditable)
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && !element.closest('[inert], [aria-hidden="true"], aside, nav, [data-message-author-role], [data-user-message-bubble], pre, code, [role="menu"], [role="dialog"]');
+        });
+        const roots = candidates.filter(element => !candidates.some(other => other !== element && other.contains(element)));
+        if (roots.length !== 1 || !(roots[0] instanceof HTMLElement)) return false;
+        const composer = roots[0];
+        composer.focus({ preventScroll: true });
+        if (document.activeElement !== composer && !composer.contains(document.activeElement)) return false;
         if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
-          const prototype = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-          setter?.call(composer, prompt);
-          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: prompt }));
+          composer.setSelectionRange(0, composer.value.length);
         } else {
-          composer.textContent = '';
-          document.execCommand('insertText', false, prompt);
-          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: prompt }));
+          const selection = window.getSelection();
+          if (!selection) return false;
+          const range = document.createRange();
+          range.selectNodeContents(composer);
+          selection.removeAllRanges();
+          selection.addRange(range);
         }
         return true;
       })()`,
     );
-    if (!filled) throw new Error("ChatGPT composer was not found.");
+    if (!focused)
+      throw new PreparationError(
+        "ChatGPT composer could not be safely focused to insert the prompt. No prompt was submitted.",
+        "native-tool-selection-active",
+      );
+    // Let the browser and editor own input. Direct DOM replacement followed by
+    // another synthetic event can leave Lexical state and Send out of sync.
+    await window.webContents.insertText(prompt);
   }
 
   async #attachImages(

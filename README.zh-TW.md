@@ -34,6 +34,12 @@ Linux 使用 AppImage 或 DEB。
 
 介面支援英文、繁體中文、簡體中文、日文與韓文，可從「語言」選單切換。
 
+Full MCP 搭配 Pro 帳號時，GPT-5.6 Sol 與 GPT-6 Sol 的 Medium、High 與 Extra High 使用
+240,000 token 上下文，約在 220,000 token 壓縮。較大的初始內容會分段載入並逐段
+核對確認訊息，每則瀏覽器訊息仍遵守原本的上限。兩者的 Instant 都列為獨立選項，
+保留 111,193 token 上下文並在約 95,000 token 壓縮。長任務可顯示模型公開的中途進度；斷線續接時保留進度，且不重複
+已交付 Codex 的訊息。
+
 ## ChatGPT 外掛設定
 
 這裡的 GPT 外掛是 ChatGPT 的自訂 MCP 外掛（部分介面稱為 App 或連接器）。

@@ -377,6 +377,14 @@ for (const toolChoice of [undefined, "none"] as const) {
         const token = /turn_[A-Za-z0-9_-]{40,}/u.exec(input.contract ?? "")![0];
         assert.equal(broker.inventory(token).total, 0);
         input.onProgress?.("generating");
+        input.onCommentary?.({
+          messageId: "public-progress",
+          text: "Checking the selected files.",
+        });
+        input.onCommentary?.({
+          messageId: "public-progress",
+          text: "Checking the selected files.",
+        });
         input.onStreamSnapshot?.("Live Full");
         input.onStreamSnapshot?.("Rewritten interim Full answer");
         return browserResult;
@@ -418,7 +426,7 @@ for (const toolChoice of [undefined, "none"] as const) {
       let body = "";
       await deadline(
         (async () => {
-          while (!body.includes(BRIDGE_PROGRESS_TEXT.working)) {
+          while (!body.includes("Checking the selected files.")) {
             const chunk = await reader!.read();
             assert.equal(chunk.done, false);
             body += decoder.decode(chunk.value, { stream: true });
@@ -426,6 +434,7 @@ for (const toolChoice of [undefined, "none"] as const) {
         })(),
       );
       assert.ok(body.includes(BRIDGE_PROGRESS_TEXT.working));
+      assert.ok(body.includes("Checking the selected files."));
       assert.doesNotMatch(body, /Live Full|Rewritten interim/u);
       assert.doesNotMatch(body, /event: response\.completed/u);
       finish("Live Full answer");
@@ -457,6 +466,26 @@ for (const toolChoice of [undefined, "none"] as const) {
         events.filter((event) => event.type === "response.completed").length,
         1,
       );
+      const commentary = events.filter(
+        (event) =>
+          event.type === "response.output_item.done" &&
+          String((event.item as { id: string }).id).startsWith(
+            "msg_bridge_commentary_",
+          ),
+      );
+      assert.equal(commentary.length, 1);
+      assert.equal(
+        (commentary[0]!.item as { phase: string }).phase,
+        "commentary",
+      );
+      const completed = events.find(
+        (event) => event.type === "response.completed",
+      )!;
+      const output = (
+        completed.response as { output: Array<{ id: string; phase: string }> }
+      ).output;
+      assert.equal(output[1]!.id, (commentary[0]!.item as { id: string }).id);
+      assert.equal(output[2]!.phase, "final_answer");
       assert.doesNotMatch(body, /turn_[A-Za-z0-9_-]{40,}/u);
       assert.equal(runs, 1);
     } finally {

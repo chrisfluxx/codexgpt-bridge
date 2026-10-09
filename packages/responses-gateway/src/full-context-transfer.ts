@@ -178,7 +178,7 @@ export function planFullContextTransfer(
       limits.imageTokens;
     if (transactionTokens > limits.transactionTokens)
       throw new FullContextTransferError(
-        "The complete staged transaction exceeds its 3× context budget, including wrappers and acknowledgements. No prompt was submitted.",
+        "The complete staged transaction exceeds its context budget, including wrappers and acknowledgements. No prompt was submitted.",
       );
     return {
       transactionId,

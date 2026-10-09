@@ -7,6 +7,15 @@ import type {
 
 export type BridgeAccountContextProfile = "compatibility" | "standard" | "pro";
 
+// Use the locally verified GPT-5.6 and GPT-6 Sol Pro-account retention budget.
+// The browser message envelope stays smaller; larger payloads must be staged.
+export const BRIDGE_SOL_FULL_CONTEXT_WINDOW = 240_000;
+export const BRIDGE_SOL_FULL_AUTO_COMPACT_LIMIT = 220_000;
+// Preserve the names exported before GPT-5.6 gained the same Full profile.
+export const BRIDGE_GPT6_FULL_CONTEXT_WINDOW = BRIDGE_SOL_FULL_CONTEXT_WINDOW;
+export const BRIDGE_GPT6_FULL_AUTO_COMPACT_LIMIT =
+  BRIDGE_SOL_FULL_AUTO_COMPACT_LIMIT;
+
 export function resolveBridgeRouteContextBudget(
   route: BridgeWebModelRoute,
   profile: BridgeAccountContextProfile = "compatibility",
@@ -17,6 +26,20 @@ export function resolveBridgeRouteContextBudget(
     route.mode,
     route.mode === "pro" && profile === "standard" ? "pro" : profile,
   );
+  if (
+    route.stagedContext &&
+    (route.nativeFamily === "6" || route.nativeFamily === "5.6") &&
+    profile === "pro" &&
+    ["medium", "high", "extra-high"].includes(route.mode)
+  )
+    return {
+      ...budget,
+      contextWindow: BRIDGE_SOL_FULL_CONTEXT_WINDOW,
+      hardInputTokenLimit: BRIDGE_SOL_FULL_CONTEXT_WINDOW,
+      autoCompactTokenLimit: BRIDGE_SOL_FULL_AUTO_COMPACT_LIMIT,
+      stagedContext: true,
+      profile: `${budget.profile}-gpt${route.nativeFamily}-full`,
+    };
   if (
     route.slug === "codexgpt-bridge/luna-native" &&
     profile !== "compatibility"

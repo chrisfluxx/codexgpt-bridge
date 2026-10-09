@@ -51,8 +51,31 @@ const server = createServer(async (req, res) => {
       const payload = { message: { id: 'answer-' + sent, author: { role: 'assistant' }, recipient: 'all', channel: 'final', status: 'finished_successfully', end_turn: true, content: { content_type: 'text', parts: ['TEMP_OK'] } } };
       return new Response('data: ' + JSON.stringify(payload) + '\\n\\ndata: [DONE]\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
     };
-    if (${JSON.stringify(mode)} === 'full') composer.innerHTML='<span contenteditable="false" data-id="plugin:fixture" data-keyword="Fixture App">Fixture App</span> ';
-    composer.oninput=()=>{if(${JSON.stringify(mode)}==='drift')document.querySelector('#page-header').replaceChildren();};
+    if (${JSON.stringify(mode)} === 'full' || ['hidden-user-hydrated-full','hidden-user-delayed-full'].includes(${JSON.stringify(mode)})) composer.innerHTML='<span contenteditable="false" data-id="plugin:fixture" data-keyword="Fixture App">Fixture App</span> ';
+    let hydrated = false;
+    composer.oninput=()=>{
+      if(${JSON.stringify(mode)}==='drift')document.querySelector('#page-header').replaceChildren();
+      if (${JSON.stringify(mode)} === 'hidden-user-delayed-full' && sent === 1 && !hydrated) {
+        hydrated = true;
+        const messages=document.querySelector('#messages');
+        const previous=[...messages.children];
+        messages.replaceChildren();
+        document.querySelector('#page-header').replaceChildren();
+        setTimeout(()=>messages.append(...previous), 600);
+      }
+      if (${JSON.stringify(mode)} === 'hidden-user-hydrated-full' && sent === 1 && !hydrated) {
+        hydrated = true;
+        const answer = document.querySelector('#messages > section');
+        answer.dataset.turnKey = 'hydrated-turn-1';
+        answer.firstElementChild.dataset.chatgptSearchUnitKey = 'hydrated-turn-1:1:assistant';
+        const user = document.createElement('section');
+        user.dataset.turnKey = 'hydrated-user-1';
+        user.dataset.userMessageBubble = '';
+        user.textContent = 'HIDDEN_USER_PRIVATE_REQUEST';
+        answer.before(user);
+        document.querySelector('#page-header').replaceChildren();
+      }
+    };
     document.querySelector('[data-testid="send-button"]').onclick=async()=>{
       const text=composer.textContent;
       await fetch('/send',{method:'POST',body:JSON.stringify({temporary:${temporary},text,mode:${JSON.stringify(mode)}})});
@@ -193,21 +216,32 @@ try {
     "dom-only",
     "new-generation",
     "changed-message",
+    "hydrated-full",
+    "delayed-full",
   ]) {
     behavior =
-      variant === "dom-only" ? "hidden-user-dom-only" : "hidden-user-stream";
+      variant === "dom-only"
+        ? "hidden-user-dom-only"
+        : variant.endsWith("-full")
+          ? "hidden-user-" + variant
+          : "hidden-user-stream";
     const history = [{ role: "user", content: "HIDDEN_USER_PRIVATE_REQUEST" }];
     const hiddenTurn = () => {
       const compiled = compileResponsesPrompt({
         instructions: "HIDDEN_USER_RULES_ONCE",
         input: history,
       });
-      return run("temporary-hidden-" + variant, true, false, {
-        operationId: "hidden-" + variant + "-" + turn,
-        prompt: prepareBridgeWebTurn(compiled).prompt,
-        context: compiled.context,
-        contract: "HIDDEN_USER_CONTRACT_ONCE",
-      });
+      return run(
+        "temporary-hidden-" + variant,
+        true,
+        variant.endsWith("-full"),
+        {
+          operationId: "hidden-" + variant + "-" + turn,
+          prompt: prepareBridgeWebTurn(compiled).prompt,
+          context: compiled.context,
+          contract: "HIDDEN_USER_CONTRACT_ONCE",
+        },
+      );
     };
     const previousWindowIds = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map((window) => window.id),
@@ -243,7 +277,7 @@ try {
       );
     }
     await hiddenTurn();
-    if (variant === "stream") {
+    if (variant === "stream" || variant.endsWith("-full")) {
       assert.equal(
         navigations.length,
         beforeNavigation,

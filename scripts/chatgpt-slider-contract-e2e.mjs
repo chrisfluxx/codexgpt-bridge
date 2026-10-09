@@ -8,6 +8,10 @@ import process from "node:process";
 import { _electron as electron } from "playwright-core";
 import { readModelSlider } from "../apps/desktop/dist/main/model-picker-surface.js";
 import { observeModelMenu } from "../apps/desktop/dist/main/model-menu.js";
+import {
+  observeModelSelection,
+  verifyModelSelection,
+} from "../apps/desktop/dist/main/model-selection.js";
 
 const thumb =
   '<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4" aria-valuenow="2"></span>';
@@ -166,6 +170,61 @@ try {
         assert.notEqual(result.menu, "slider", fixture.name);
     }
     process.stdout.write(fixture.name + ": passed\n");
+  }
+  for (const [name, control, checked, description, accepted] of [
+    [
+      "localized model and effort",
+      "5.6 Sol 極高",
+      "GPT-5.6 Sol",
+      "5.6 Sol 極高，第 4 個，共 5 個。",
+      true,
+    ],
+    [
+      "English model prefix alias",
+      "5.6 Sol Extra High",
+      "GPT-5.6 Sol",
+      "5.6 Sol Extra High, position 4 of 5.",
+      true,
+    ],
+    [
+      "conflicting selected families",
+      "5.6 Sol 極高",
+      "6",
+      "5.6 Sol 極高，第 4 個，共 5 個。",
+      false,
+    ],
+    [
+      "conflicting active version",
+      "5.6 Sol 極高",
+      "GPT-5.6 Sol",
+      "6 極高，第 4 個，共 5 個。",
+      false,
+    ],
+  ]) {
+    await page.setContent(
+      `<main><form><div id="prompt-textarea" contenteditable="true" style="width:400px;min-height:30px"></div><button data-testid="model-switcher-dropdown-button" aria-haspopup="menu">${control}</button></form><div id="owned" role="menu" data-testid="composer-intelligence-picker-content"><button role="menuitemradio" aria-checked="true">${checked}</button><span id="native-status" role="status">${description}</span>${proxy(thumb.replace('aria-valuenow="2"', 'aria-valuenow="3"'), 'aria-describedby="native-status"')}</div></main>`,
+    );
+    const observed = await page.evaluate(
+      `(${observeModelSelection.toString()})(() => [document.querySelector('#owned')])`,
+    );
+    const receipt = verifyModelSelection(
+      "localized-contract",
+      "extra-high",
+      "bridge-native:5.6",
+      observed,
+    );
+    assert.equal(
+      receipt.confidence,
+      accepted ? "UI_VERIFIED" : "REJECTED",
+      JSON.stringify({ name, observed }),
+    );
+    if (accepted) {
+      assert.equal(observed.model, "GPT-5.6 Sol");
+      assert.equal(observed.ambiguous, false);
+    }
+    if (name === "conflicting selected families")
+      assert.equal(observed.ambiguous, true);
+    process.stdout.write(name + ": passed\n");
   }
 } finally {
   await app?.close();
