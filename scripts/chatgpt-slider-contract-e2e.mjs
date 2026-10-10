@@ -33,8 +33,32 @@ const cases = [
     accepted: true,
   },
   {
+    name: "roving keyboard proxy with hidden numeric thumb",
+    body: proxy().replace('tabindex="0"', 'tabindex="-1"'),
+    accepted: true,
+  },
+  {
+    name: "disabled roving keyboard proxy",
+    body: proxy(thumb, 'aria-disabled="true"').replace(
+      'tabindex="0"',
+      'tabindex="-1"',
+    ),
+    accepted: true,
+    disabled: true,
+  },
+  {
     name: "sliderless Traditional Chinese ordinal status",
     body: ordinalProxy("5.6 高，第 3 個，共 5 個。"),
+    accepted: true,
+  },
+  {
+    name: "sliderless Traditional Chinese item ordinal status",
+    body: ordinalProxy("6 High，第 3 項，共 5 項。"),
+    accepted: true,
+  },
+  {
+    name: "sliderless Simplified Chinese item ordinal status",
+    body: ordinalProxy("6 High，第 3 项，共 5 项。"),
     accepted: true,
   },
   {
@@ -90,7 +114,7 @@ const cases = [
   },
   {
     name: "nonfocusable proxy",
-    body: proxy().replace('tabindex="0"', 'tabindex="-1"'),
+    body: proxy().replace('tabindex="0"', ""),
     accepted: false,
     menuMustNotBeSlider: true,
   },

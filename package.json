@@ -1,6 +1,6 @@
 {
   "name": "codexgpt-bridge",
-  "version": "0.1.100",
+  "version": "0.1.101",
   "private": true,
   "description": "Bring ChatGPT Web models into Codex.",
   "author": "CodexGPT Bridge contributors",

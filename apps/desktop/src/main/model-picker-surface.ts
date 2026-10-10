@@ -200,7 +200,7 @@ export function readModelSlider(
   const ordinalState = (text: string): ModelSliderState | undefined => {
     const normalized = text.replace(/\s+/gu, " ").trim();
     const match =
-      /第\s*(\d+)\s*(?:個|个)[，,\s]*共\s*(\d+)\s*(?:個|个)/u.exec(
+      /第\s*(\d+)\s*(?:個|个|項|项)[，,\s]*共\s*(\d+)\s*(?:個|个|項|项)/u.exec(
         normalized,
       ) ??
       /(?:position\s*)?(\d+)\s*(?:of|out of|\/)\s*(\d+)/iu.exec(normalized);
@@ -270,7 +270,8 @@ export function readModelSlider(
     if (
       !(control instanceof HTMLElement) ||
       !visible(control) ||
-      control.tabIndex < 0 ||
+      (control.tabIndex < 0 &&
+        !(control.tabIndex === -1 && control.hasAttribute("tabindex"))) ||
       !ownedRoots.some((root) => root.contains(control))
     ) {
       continue;
@@ -375,6 +376,9 @@ export function readModelSlider(
     Boolean(
       element?.closest(disabledSelector) || control.closest(disabledSelector),
     );
-  if (focus && !disabled) control.focus({ preventScroll: true });
+  if (focus && !disabled) {
+    control.focus({ preventScroll: true });
+    if (document.activeElement !== control) return undefined;
+  }
   return { min, max, value, disabled };
 }

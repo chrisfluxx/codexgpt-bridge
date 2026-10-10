@@ -53,7 +53,7 @@ export function observeModelMenu(
   const ordinalState = (text: string): boolean => {
     const normalized = text.replace(/\s+/gu, " ").trim();
     const match =
-      /第\s*(\d+)\s*(?:個|个)[，,\s]*共\s*(\d+)\s*(?:個|个)/u.exec(
+      /第\s*(\d+)\s*(?:個|个|項|项)[，,\s]*共\s*(\d+)\s*(?:個|个|項|项)/u.exec(
         normalized,
       ) ??
       /(?:position\s*)?(\d+)\s*(?:of|out of|\/)\s*(\d+)/iu.exec(normalized);
@@ -87,7 +87,9 @@ export function observeModelMenu(
       return (
         keys.includes("ArrowLeft") &&
         keys.includes("ArrowRight") &&
-        element.tabIndex >= 0 &&
+        // Roving menu items remain programmatically focusable at tabindex=-1.
+        (element.tabIndex >= 0 ||
+          (element.tabIndex === -1 && element.hasAttribute("tabindex"))) &&
         [
           ...element.querySelectorAll('[role="slider"][aria-hidden="true"]'),
         ].some(

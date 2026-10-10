@@ -15,11 +15,12 @@ function fixture({
   drift = false,
   unavailable = false,
   contradictory = false,
+  roving = false,
 } = {}) {
   return `<!doctype html><body>
     <aside><button data-tone="neutral" aria-haspopup="menu" onclick="window.unrelatedClicks++">High</button></aside>
     <main><form onsubmit="return false">
-      <div id="prompt-textarea" contenteditable="true" style="width:600px;min-height:180px"></div>
+      <div ${roving ? "data-composer-markdown" : 'id="prompt-textarea"'} contenteditable="true" style="width:600px;min-height:180px"></div>
       <button id="picker" type="button" data-tone="neutral" aria-haspopup="dialog" aria-controls="effort-popover">${generic ? "推理強度" : "高"}</button>
       <button type="button" data-testid="send-button">Send</button>
     </form><div id="messages"></div></main>
@@ -37,6 +38,7 @@ function fixture({
         if (${native}) slider.value = selected; else slider.setAttribute('aria-valuenow', selected);
         slider.setAttribute('aria-valuetext', ${contradictory} ? 'Medium' : labels[selected]);
         root.querySelector('[data-mode]').textContent = labels[selected];
+        if (${roving}) root.querySelector('[role="status"]').textContent = '6 ' + labels[selected] + '，第 ' + (selected + 1) + ' 項，共 5 項。';
         if (!${generic}) picker.textContent = labels[selected];
       };
       picker.onclick = () => {
@@ -45,9 +47,12 @@ function fixture({
         if (document.querySelector('#effort-popover')) { close(); return; }
         const root = document.createElement('div'); root.id = 'effort-popover';
         if (${contents}) { root.style.display = 'contents'; root.setAttribute('data-testid', 'composer-intelligence-picker-content'); }
-        else root.role = 'dialog';
+        else root.role = ${roving} ? 'menu' : 'dialog';
         root.innerHTML = '<button type="button" aria-haspopup="menu" aria-expanded="false" data-mode></button>' +
-          (${native} ? '<input data-slider type="range" min="0" max="4" step="1">' : '<button role="menuitem"><span data-slider role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="4" style="display:inline-block;width:200px;height:24px"></span></button>');
+          (${roving}
+            ? '<button role="menuitemradio" aria-checked="true">6</button><span id="native-status" role="status"></span><div role="menuitem" tabindex="-1" aria-keyshortcuts="ArrowLeft ArrowRight" aria-describedby="native-status" style="width:200px;height:30px"><span data-slider role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4"></span></div>'
+            : ${native} ? '<input data-slider type="range" min="0" max="4" step="1">' : '<button role="menuitem"><span data-slider role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="4" style="display:inline-block;width:200px;height:24px"></span></button>');
+        if (${roving}) root.innerHTML = '<div data-model-picker-view="simple">' + root.innerHTML + '</div>';
         const slider = root.querySelector('[data-slider]');
         if (${native}) slider.oninput = () => { selected = Number(slider.value); render(); };
         else slider.parentElement.onkeydown = e => {
@@ -56,7 +61,7 @@ function fixture({
         };
         document.body.append(root); picker.setAttribute('aria-expanded', 'true'); render();
       };
-      const composer = document.querySelector('#prompt-textarea');
+      const composer = document.querySelector('#prompt-textarea, [data-composer-markdown]');
       composer.addEventListener('input', () => { if (${drift}) { selected = 1; if (!${generic}) picker.textContent = labels[selected]; } });
       document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
       document.querySelector('[data-testid="send-button"]').onclick = () => {
@@ -77,10 +82,17 @@ try {
     args: [fileURLToPath(new URL("./chatgpt-mode-host.mjs", import.meta.url))],
     env: { ...process.env, CODEXGPT_BRIDGE_DOM_TEST_PROFILE: directory },
   });
-  for (const [name, settings, fails] of [
+  for (const [name, settings, fails, mode = "high", model] of [
     ["linked-dialog-with-current-high", {}, false],
     ["contents-wrapper-with-current-high", { contents: true }, false],
     ["localized-reasoning-button", { generic: true }, false],
+    [
+      "native-six-roving-slider-high-to-extra-high",
+      { roving: true, generic: true },
+      false,
+      "extra-high",
+      "bridge-native:6",
+    ],
     [
       "native-range-medium-to-high",
       { native: true, generic: true, initial: 1 },
@@ -108,7 +120,7 @@ try {
     ],
   ]) {
     const result = await app.evaluate(
-      async ({ BrowserWindow }, { html, name, fails }) => {
+      async ({ BrowserWindow }, { html, name, fails, mode, model }) => {
         const receipts = [],
           traces = [],
           errors = [];
@@ -126,7 +138,8 @@ try {
           for (let attempt = 0; attempt < (fails ? 5 : 2); attempt++) {
             try {
               await controller.runTurn({
-                mode: "high",
+                mode,
+                modelFamily: model,
                 threadId: name,
                 turnId: fails ? "same-turn" : "turn-" + attempt,
                 operationId: fails ? "same-operation" : "operation-" + attempt,
@@ -151,7 +164,7 @@ try {
           await controller.close();
         }
       },
-      { html: fixture(settings), name, fails },
+      { html: fixture(settings), name, fails, mode, model },
     );
     assert.equal(result.unrelatedClicks, 0, name);
     if (fails) {
@@ -165,7 +178,11 @@ try {
     } else {
       assert.deepEqual(result.errors, [], JSON.stringify({ name, ...result }));
       assert.equal(result.sends, 2, name);
-      assert.equal(result.receipts.at(-1).observed.mode, "high", name);
+      assert.equal(result.receipts.at(-1).observed.mode, mode, name);
+      if (model) {
+        assert.equal(result.receipts.at(-1).confidence, "UI_VERIFIED", name);
+        assert.equal(result.receipts.at(-1).observed.model, "6", name);
+      }
       assert.ok(
         result.receipts.every((receipt) => receipt.confidence !== "REJECTED"),
         name,
