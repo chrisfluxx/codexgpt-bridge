@@ -71,6 +71,15 @@ function fixture(
         const turn = document.createElement('div'); turn.dataset.testid = 'conversation-turn-' + window.sent.length;
         const reply = document.createElement('div'); reply.dataset.messageAuthorRole = 'assistant'; reply.dataset.messageId = 'answer-' + window.sent.length; reply.textContent = answer;
         const copy = document.createElement('button'); copy.dataset.testid = 'copy-turn-button'; copy.textContent = 'Copy'; turn.append(reply, copy); document.querySelector('#messages').append(turn);
+        if (ack && ${JSON.stringify(tamper)} === 'tool') {
+          const tool = document.createElement('div');
+          tool.dataset.testid = 'tool-call';
+          tool.textContent = 'Unexpected native tool call';
+          turn.append(tool);
+        }
+        if (ack && ${JSON.stringify(tamper)} === 'media') {
+          reply.append(document.createElement('canvas'));
+        }
         if (${hiddenUser}) {
           if (window.sent.length === 1) {
             turn.removeAttribute('data-testid'); turn.dataset.turnKey = 'fallback-turn-0';
@@ -139,6 +148,13 @@ try {
       tamper: "document",
     },
     { badAck: false, stagedContext: true, temporaryChat: true, tamper: "body" },
+    { badAck: false, stagedContext: true, temporaryChat: true, tamper: "tool" },
+    {
+      badAck: false,
+      stagedContext: true,
+      temporaryChat: true,
+      tamper: "media",
+    },
   ]) {
     if (process.argv.includes("--temporary-only") && !temporaryChat) continue;
     currentHtml = fixture(badAck, temporaryChat, tamper, hiddenUser);
@@ -252,6 +268,10 @@ try {
       assert.equal(result.sent.length, 1);
       assert.equal(result.commits, 0);
       assert.equal(result.error.code, "bridge_full_context_transfer_failed");
+      if (tamper === "tool")
+        assert.match(result.error.message, /opened an App or tool/);
+      if (tamper === "media")
+        assert.match(result.error.message, /produced media/);
     } else {
       assert.equal(result.error, undefined, JSON.stringify(result));
       assert.equal(result.committed, true);
@@ -268,7 +288,8 @@ try {
           .every(
             (text) =>
               !text.includes("FINAL_EXECUTION_CONTRACT") &&
-              !text.includes("turn_" + "b".repeat(43)),
+              !text.includes("turn_" + "b".repeat(43)) &&
+              !text.includes("CodexGPT Bridge"),
           ),
       );
       assert.match(result.sent.at(-1), /FINAL_EXECUTION_CONTRACT/);

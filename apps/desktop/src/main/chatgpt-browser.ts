@@ -74,6 +74,7 @@ import {
   observeChatGpt,
   type ChatGptBrowserObservation,
 } from "./chatgpt-observation.js";
+import { contextStageAnomaly } from "./chatgpt-context-stage.js";
 import {
   downloadGeneratedImages,
   withMediaTextFallback,
@@ -2858,24 +2859,22 @@ class ChatGptBrowserSession {
       );
     const stageInput = {
       ...input,
+      // Context parts are inert data. Do not expose CodexGPT tools until the
+      // final commit contains the execution contract and the current request.
+      allowWebNativeTools: false,
       operationId: createHash("sha256")
         .update(`${input.operationId}:context-stage-${index}`)
         .digest("hex"),
     };
     let submitted = false;
-    let bound = false;
     const prepare = async (): Promise<void> => {
       input.signal.throwIfAborted();
       await this.#ensureTemporaryChat(window, input);
       await this.#assertServerSession(window, input.signal);
-      await this.#resetComposerState(window, input.signal, connector);
-      bound = await this.#hasBoundConnectorConversation(window, connector);
-      if (!bound)
-        await this.#selectFullMcpConnector(window, connector, input.signal, 2);
+      await this.#resetComposerState(window, input.signal);
       await this.#selectMode(window, input.mode, input.signal, family);
-      if (bound) await this.#fillComposer(window, stage.text);
-      else await this.#appendPromptAfterConnector(window, stage.text);
-      await this.#verifyBeforeSubmit(window, stageInput, family, bound);
+      await this.#fillComposer(window, stage.text);
+      await this.#verifyBeforeSubmit(window, stageInput, family);
     };
     try {
       await prepare();
@@ -2916,14 +2915,10 @@ class ChatGptBrowserSession {
         input.signal.throwIfAborted();
         const limited = this.#rateLimitObservation();
         if (limited) throw limited.error;
-        if (
-          observation.error ||
-          observation.webNativeToolPresent ||
-          observation.mediaPending ||
-          observation.hasRenderableMedia
-        )
+        const anomaly = contextStageAnomaly(observation);
+        if (anomaly)
           throw new FullContextTransferError(
-            "ChatGPT produced an error, tool call, or media during inert context transport. The final commit was withheld.",
+            `Context part ${index}: ${anomaly} The final commit was withheld.`,
           );
         const hasNewAssistant =
           (observation.userToken !== baseline.userToken ||
@@ -2953,7 +2948,7 @@ class ChatGptBrowserSession {
             completed.trim() !== stage.acknowledgement
           )
             throw new FullContextTransferError(
-              `ChatGPT did not acknowledge context part ${index} exactly. The final commit was withheld; canonical history was retained.`,
+              `Context part ${index}: ChatGPT returned an unexpected acknowledgement. The final commit was withheld; canonical history was retained.`,
             );
           const transfer = input.execution.multipart;
           if (this.#operationKey && transfer)
@@ -2967,7 +2962,7 @@ class ChatGptBrowserSession {
           // An ACK can replace the empty-page Temporary Chat controls before
           // the next part. Retain its exact verified document and answer just
           // as for a completed user turn, without committing canonical context.
-          await this.#rememberTemporarySource(window, input, observation);
+          await this.#rememberTemporarySource(window, stageInput, observation);
           if (observation.terminalConfirmed)
             this.#confirmedCompletion = {
               userToken: observation.userToken,

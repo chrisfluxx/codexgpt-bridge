@@ -15,6 +15,7 @@ import {
   type ChatGptDomNode,
 } from "./chatgpt-markdown.js";
 import { sameCompletedBody } from "./chatgpt-generation.js";
+import { contextStageAnomaly } from "./chatgpt-context-stage.js";
 import {
   CompletionTrace,
   CompletionDiagnosticStore,
@@ -23,6 +24,53 @@ import {
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+describe("Inert context transfer safeguards", () => {
+  const clean = {
+    error: "",
+    webNativeToolError: "",
+    webNativeToolPending: false,
+    webNativeToolPresent: false,
+    mediaPending: false,
+    hasRenderableMedia: false,
+  };
+
+  it("accepts ordinary text-only ACK observations", () => {
+    assert.equal(contextStageAnomaly(clean), undefined);
+  });
+
+  it("reports tool calls and tool failures distinctly from media", () => {
+    assert.match(
+      contextStageAnomaly({ ...clean, webNativeToolPresent: true }) ?? "",
+      /opened an App or tool/u,
+    );
+    assert.match(
+      contextStageAnomaly({ ...clean, webNativeToolPending: true }) ?? "",
+      /wait for a tool/u,
+    );
+    assert.match(
+      contextStageAnomaly({
+        ...clean,
+        webNativeToolError: "template failed",
+      }) ?? "",
+      /App\/template error/u,
+    );
+    assert.match(
+      contextStageAnomaly({ ...clean, mediaPending: true }) ?? "",
+      /produced media/u,
+    );
+  });
+
+  it("reports ChatGPT errors with a bounded message", () => {
+    const result = contextStageAnomaly({
+      ...clean,
+      error: "error ".repeat(300),
+      webNativeToolPresent: true,
+    });
+    assert.match(result ?? "", /page error/u);
+    assert.ok((result ?? "").length < 240);
+  });
+});
 
 it("preserves every submission attempt even when milestones retain only the first", () => {
   const trace = new CompletionTrace("retry-diagnostic");
